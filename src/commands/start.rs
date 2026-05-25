@@ -15,18 +15,24 @@ pub struct Start {
 impl Run for Start {
     fn run(&self, ctx: &mut Context) -> anyhow::Result<()> {
         let interval = Duration::from_millis(self.interval);
-        let state = ctx.state_mut();
 
         loop {
             let next_tick = Instant::now() + interval;
             let now = Local::now();
 
+            let state = ctx.state_mut();
             state.reload(); // Ensure we have the latest changes.
 
             if state.is_paused(&now) {
                 sleep_until(next_tick);
                 continue;
             }
+
+            // Get user's location
+            // - Check configuration file
+            // - Check cache
+            // - Query external API
+            let _config = ctx.config_mut();
 
             // Get sunrise/sunset times
 

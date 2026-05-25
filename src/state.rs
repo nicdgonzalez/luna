@@ -7,22 +7,15 @@ use tracing::warn;
 use crate::repository::Repository;
 
 #[derive(Debug)]
-pub struct StateManager<R> {
+pub struct State<R> {
     repo: R,
     data: StateData,
 }
 
-impl<'a, R> StateManager<R>
+impl<R> State<R>
 where
-    R: Repository<'a, StateData>,
+    R: Repository<StateData>,
 {
-    /// Construct a new state manager using data from the repository.
-    #[expect(unused, reason = "not needed, but for sake of completeness...")]
-    pub fn from_repo(repo: R) -> Result<Self, R::Err> {
-        let data = repo.load()?;
-        Ok(Self { repo, data })
-    }
-
     /// Construct a new state manager using data from the repository.
     /// Upon failure, load using default data instead.
     #[must_use]

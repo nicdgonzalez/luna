@@ -18,6 +18,7 @@ use std::fs;
 use std::io::{self, Write as _};
 use std::path::PathBuf;
 use std::process::ExitCode;
+use std::sync::Arc;
 
 use anyhow::Context as _;
 use clap::Parser as _;
@@ -25,8 +26,10 @@ use colored::Colorize;
 use tracing_subscriber::EnvFilter;
 use tracing_subscriber::prelude::*;
 
+use crate::cache::Cache;
+use crate::config::Config;
 use crate::context::{Context, FileRepository};
-use crate::state::StateManager;
+use crate::state::State;
 
 /// Automatically update the system theme based on local sunrise and sunset times.
 #[derive(Debug, clap::Parser)]
@@ -66,10 +69,14 @@ fn try_main() -> anyhow::Result<ExitCode> {
 
     let state_path = get_state_path()?;
     let config_path = get_config_path()?;
+    let cache_path = get_cache_path()?;
 
-    let repo = FileRepository::new(state_path, config_path);
-    let state = StateManager::from_repo_or_default(repo);
-    let ctx = Context::new(state);
+    let repo = Arc::new(FileRepository::new(state_path, config_path, cache_path));
+
+    let state = State::from_repo_or_default(repo.clone());
+    let config = Config::from_repo_or_default(repo.clone());
+    let cache = Cache::from_repo_or_default(repo.clone());
+    let ctx = Context::new(state, config, cache);
 
     args.subcommand.run(ctx).map(|()| ExitCode::SUCCESS)
 }
@@ -90,6 +97,16 @@ fn get_config_path() -> anyhow::Result<PathBuf> {
 
     fs::create_dir_all(path.parent().unwrap())
         .context("failed to create subdirectory in config directory")?;
+
+    Ok(path)
+}
+
+fn get_cache_path() -> anyhow::Result<PathBuf> {
+    let mut path = dirs::cache_dir().context("failed to get cache directory")?;
+    path.extend(["luna", "cache.json"]);
+
+    fs::create_dir_all(path.parent().unwrap())
+        .context("failed to create subdirectory in cache directory")?;
 
     Ok(path)
 }

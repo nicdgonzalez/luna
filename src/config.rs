@@ -7,14 +7,14 @@ use tracing::warn;
 use crate::repository::Repository;
 
 #[derive(Debug)]
-pub struct ConfigManager<R> {
+pub struct Config<R> {
     repo: R,
     data: ConfigData,
 }
 
-impl<'a, R> ConfigManager<R>
+impl<R> Config<R>
 where
-    R: Repository<'a, ConfigData>,
+    R: Repository<ConfigData>,
 {
     /// Construct a new configuration manager using data from the repository.
     #[expect(unused, reason = "not needed, but for sake of completeness...")]
@@ -32,6 +32,7 @@ where
     }
 
     /// Synchronize our data with the repository.
+    #[expect(unused)]
     pub fn reload(&mut self) {
         self.data = self
             .repo
@@ -41,6 +42,7 @@ where
     }
 
     /// Represents the data stored within our repository.
+    #[expect(unused)]
     #[must_use]
     pub fn data(&self) -> &ConfigData {
         &self.data
@@ -56,11 +58,13 @@ pub struct ConfigData {
 }
 
 impl ConfigData {
+    #[expect(unused)]
     #[must_use]
     pub fn fallback(&self) -> &Fallback {
         &self.fallback
     }
 
+    #[expect(unused)]
     #[must_use]
     pub fn location(&self) -> &Location {
         &self.location
@@ -84,12 +88,14 @@ impl Default for Fallback {
 
 impl Fallback {
     /// Time to turn on light mode
+    #[expect(unused)]
     #[must_use]
     pub fn sunrise(&self) -> &NaiveTime {
         &self.sunrise
     }
 
     /// Time to turn on dark mode
+    #[expect(unused)]
     #[must_use]
     pub fn sunset(&self) -> &NaiveTime {
         &self.sunset
@@ -103,6 +109,7 @@ pub struct Location {
     latitude: Option<f32>,
 }
 
+#[expect(unused)]
 #[derive(Debug, Clone, Copy)]
 pub struct GeoCoordinate {
     /// Position on the Earth horizontally
@@ -123,12 +130,14 @@ impl Default for Location {
 
 impl Location {
     /// Whether to use the user's current location to determine sunrise/sunset times
+    #[expect(unused)]
     #[must_use]
     pub const fn is_enabled(&self) -> bool {
         self.enabled
     }
 
     /// Returns the stored geographic coordinates if both longitude and latitude are set.
+    #[expect(unused)]
     pub fn coordinates(&self) -> Option<GeoCoordinate> {
         match (self.longitude, self.latitude) {
             (Some(longitude), Some(latitude)) => Some(GeoCoordinate {
