@@ -2,7 +2,6 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use chrono::Local;
-use tracing::debug;
 
 use crate::commands::prelude::*;
 
@@ -29,7 +28,11 @@ impl Run for Start {
                 continue;
             }
 
-            debug!("Hello, World!"); // Update system theme if needed.
+            // Get sunrise/sunset times
+
+            // Compare against current theme
+
+            // Change theme if not already set
 
             sleep_until(next_tick);
         }

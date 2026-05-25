@@ -3,7 +3,7 @@ use std::str::FromStr;
 
 use anyhow::Context;
 use chrono::{DateTime, Local};
-use tracing::error;
+use tracing::warn;
 
 pub trait StateRepository {
     type Err: fmt::Display;
@@ -13,23 +13,33 @@ pub trait StateRepository {
 }
 
 #[derive(Debug)]
-pub struct StateManager<R: StateRepository> {
+pub struct StateManager<R> {
     repo: R,
     data: StateData,
 }
 
 impl<R: StateRepository> StateManager<R> {
+    /// Construct a new state manager using data from the repository.
+    #[expect(unused, reason = "not needed, but for sake of completeness...")]
+    pub fn from_repo(repo: R) -> Result<Self, R::Err> {
+        let data = repo.load_state()?;
+        Ok(Self { repo, data })
+    }
+
+    /// Construct a new state manager using data from the repository. Upon failure, load using
+    /// default data instead.
     #[must_use]
-    pub fn new_or_default(repo: R) -> Self {
+    pub fn from_repo_or_default(repo: R) -> Self {
         let data = repo.load_state().unwrap_or_default();
         Self { repo, data }
     }
 
+    /// Synchronize our process' data with the repository.
     pub fn reload(&mut self) {
         self.data = self
             .repo
             .load_state()
-            .inspect_err(|err| error!("failed to load existing state: {err}"))
+            .inspect_err(|err| warn!("failed to load existing state: {err}"))
             .unwrap_or_default();
     }
 
@@ -38,30 +48,49 @@ impl<R: StateRepository> StateManager<R> {
         self.repo.save_state(&self.data)
     }
 
+    /// Disable the automatic theme switcher until re-enabled.
     pub fn pause_indefinitely(&mut self) -> Result<(), R::Err> {
         self.data.pause = Some(Pause::Indefinite);
         self.save()
     }
 
+    /// Pause the automatic theme switcher until the provided deadline.
     #[expect(unused)]
     pub fn pause_until(&mut self, deadline: DateTime<Local>) -> Result<(), R::Err> {
         self.data.pause = Some(Pause::Until(deadline));
         self.save()
     }
 
+    /// Unpause the automatic theme switcher.
     pub fn resume(&mut self) -> Result<(), R::Err> {
         self.data.pause = None;
         self.save()
     }
 
+    /// Whether the automatic theme switcher is currently paused.
+    #[must_use]
     pub fn is_paused(&self, now: &DateTime<Local>) -> bool {
         self.data.pause.is_some_and(|pause| pause.is_active(now))
+    }
+
+    /// Represents the data stored within our repository.
+    #[must_use]
+    pub fn data(&self) -> &StateData {
+        &self.data
     }
 }
 
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 pub struct StateData {
     pause: Option<Pause>,
+}
+
+impl StateData {
+    /// Whether the automatic theme switcher is currently on or off.
+    #[must_use]
+    pub const fn pause(&self) -> Option<&Pause> {
+        self.pause.as_ref()
+    }
 }
 
 #[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]
@@ -72,6 +101,7 @@ pub enum Pause {
 }
 
 impl Pause {
+    /// Whether we are still paused based on the current time.
     pub fn is_active(&self, now: &DateTime<Local>) -> bool {
         match *self {
             Self::Indefinite => true,

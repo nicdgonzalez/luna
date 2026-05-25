@@ -16,10 +16,10 @@ impl Context {
         Self { state }
     }
 
-    // #[must_use]
-    // pub fn state(&self) -> &StateManager<FileRepository> {
-    //     &self.state
-    // }
+    #[must_use]
+    pub fn state(&self) -> &StateManager<FileRepository> {
+        &self.state
+    }
 
     #[must_use]
     pub fn state_mut(&mut self) -> &mut StateManager<FileRepository> {

@@ -66,7 +66,7 @@ fn try_main() -> anyhow::Result<ExitCode> {
         .context("failed to create subdirectory in data directory")?;
 
     let repo = FileRepository::new(state_path);
-    let state = StateManager::new_or_default(repo);
+    let state = StateManager::from_repo_or_default(repo);
     let ctx = Context::new(state);
 
     args.subcommand.run(ctx).map(|()| ExitCode::SUCCESS)
