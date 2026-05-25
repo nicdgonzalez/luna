@@ -1,6 +1,7 @@
 use std::thread;
 use std::time::{Duration, Instant};
 
+use chrono::Local;
 use tracing::debug;
 
 use crate::commands::prelude::*;
@@ -13,22 +14,33 @@ pub struct Start {
 }
 
 impl Run for Start {
-    fn run(&self) -> anyhow::Result<()> {
+    fn run(&self, ctx: &mut Context) -> anyhow::Result<()> {
         let interval = Duration::from_millis(self.interval);
+        let state = ctx.state_mut();
 
         loop {
             let next_tick = Instant::now() + interval;
-            debug!("Hello, World!");
+            let now = Local::now();
+
+            state.reload(); // Ensure we have the latest changes.
+
+            if state.is_paused(&now) {
+                sleep_until(next_tick);
+                continue;
+            }
+
+            debug!("Hello, World!"); // Update system theme if needed.
+
             sleep_until(next_tick);
         }
     }
 }
 
 /// Puts the current thread to sleep until at least the specified deadline has passed.
-fn sleep_until(next_tick: Instant) {
-    let tick = Instant::now();
+fn sleep_until(deadline: Instant) {
+    let now = Instant::now();
 
-    if tick < next_tick {
-        thread::sleep(next_tick - tick);
+    if now < deadline {
+        thread::sleep(deadline - now);
     }
 }

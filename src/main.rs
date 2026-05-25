@@ -8,14 +8,21 @@
 )]
 
 mod commands;
+mod context;
+mod state;
 
+use std::fs;
 use std::io::{self, Write as _};
 use std::process::ExitCode;
 
+use anyhow::Context as _;
 use clap::Parser as _;
 use colored::Colorize;
 use tracing_subscriber::EnvFilter;
 use tracing_subscriber::prelude::*;
+
+use crate::context::{Context, FileRepository};
+use crate::state::StateManager;
 
 /// Automatically update the system theme based on local sunrise and sunset times.
 #[derive(Debug, clap::Parser)]
@@ -52,5 +59,15 @@ fn try_main() -> anyhow::Result<ExitCode> {
         .init();
 
     let args = Parser::parse();
-    args.subcommand.run().map(|()| ExitCode::SUCCESS)
+
+    let mut state_path = dirs::data_dir().context("failed to get data directory")?;
+    state_path.extend(["luna", "state.json"]);
+    fs::create_dir_all(state_path.parent().unwrap())
+        .context("failed to create subdirectory in data directory")?;
+
+    let repo = FileRepository::new(state_path);
+    let state = StateManager::new_or_default(repo);
+    let ctx = Context::new(state);
+
+    args.subcommand.run(ctx).map(|()| ExitCode::SUCCESS)
 }
