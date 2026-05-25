@@ -9,7 +9,7 @@ pub struct Enable;
 
 impl Run for Enable {
     fn run(&self, ctx: &mut Context) -> anyhow::Result<()> {
-        ctx.state_mut().set_pause(None)?;
+        ctx.state_mut().resume()?;
 
         writeln!(
             io::stdout(),

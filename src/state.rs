@@ -43,6 +43,7 @@ impl<R: StateRepository> StateManager<R> {
         self.save()
     }
 
+    #[expect(unused)]
     pub fn pause_until(&mut self, deadline: DateTime<Local>) -> Result<(), R::Err> {
         self.data.pause = Some(Pause::Until(deadline));
         self.save()
