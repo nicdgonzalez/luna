@@ -1,16 +1,10 @@
-use std::fmt;
 use std::str::FromStr;
 
 use anyhow::Context;
 use chrono::{DateTime, Local};
 use tracing::warn;
 
-pub trait StateRepository {
-    type Err: fmt::Display;
-
-    fn load_state(&self) -> Result<StateData, Self::Err>;
-    fn save_state(&mut self, state: &StateData) -> Result<(), Self::Err>;
-}
+use crate::repository::Repository;
 
 #[derive(Debug)]
 pub struct StateManager<R> {
@@ -18,34 +12,37 @@ pub struct StateManager<R> {
     data: StateData,
 }
 
-impl<R: StateRepository> StateManager<R> {
+impl<'a, R> StateManager<R>
+where
+    R: Repository<'a, StateData>,
+{
     /// Construct a new state manager using data from the repository.
     #[expect(unused, reason = "not needed, but for sake of completeness...")]
     pub fn from_repo(repo: R) -> Result<Self, R::Err> {
-        let data = repo.load_state()?;
+        let data = repo.load()?;
         Ok(Self { repo, data })
     }
 
-    /// Construct a new state manager using data from the repository. Upon failure, load using
-    /// default data instead.
+    /// Construct a new state manager using data from the repository.
+    /// Upon failure, load using default data instead.
     #[must_use]
     pub fn from_repo_or_default(repo: R) -> Self {
-        let data = repo.load_state().unwrap_or_default();
+        let data = repo.load().unwrap_or_default();
         Self { repo, data }
     }
 
-    /// Synchronize our process' data with the repository.
+    /// Synchronize our data with the repository.
     pub fn reload(&mut self) {
         self.data = self
             .repo
-            .load_state()
+            .load()
             .inspect_err(|err| warn!("failed to load existing state: {err}"))
             .unwrap_or_default();
     }
 
     /// Helper function for saving data to a persistent storage.
     fn save(&mut self) -> Result<(), R::Err> {
-        self.repo.save_state(&self.data)
+        self.repo.save(&self.data)
     }
 
     /// Disable the automatic theme switcher until re-enabled.

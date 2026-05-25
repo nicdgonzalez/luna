@@ -1,8 +1,8 @@
-use crate::context::Context;
-
 mod disable;
 mod enable;
 mod start;
+
+use crate::context::Context;
 
 pub trait Run {
     fn run(&self, ctx: &mut Context) -> anyhow::Result<()>;

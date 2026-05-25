@@ -7,12 +7,16 @@
     clippy::pedantic
 )]
 
+mod cache;
 mod commands;
+mod config;
 mod context;
+mod repository;
 mod state;
 
 use std::fs;
 use std::io::{self, Write as _};
+use std::path::PathBuf;
 use std::process::ExitCode;
 
 use anyhow::Context as _;
@@ -60,14 +64,32 @@ fn try_main() -> anyhow::Result<ExitCode> {
 
     let args = Parser::parse();
 
-    let mut state_path = dirs::data_dir().context("failed to get data directory")?;
-    state_path.extend(["luna", "state.json"]);
-    fs::create_dir_all(state_path.parent().unwrap())
-        .context("failed to create subdirectory in data directory")?;
+    let state_path = get_state_path()?;
+    let config_path = get_config_path()?;
 
-    let repo = FileRepository::new(state_path);
+    let repo = FileRepository::new(state_path, config_path);
     let state = StateManager::from_repo_or_default(repo);
     let ctx = Context::new(state);
 
     args.subcommand.run(ctx).map(|()| ExitCode::SUCCESS)
+}
+
+fn get_state_path() -> anyhow::Result<PathBuf> {
+    let mut path = dirs::data_dir().context("failed to get data directory")?;
+    path.extend(["luna", "state.json"]);
+
+    fs::create_dir_all(path.parent().unwrap())
+        .context("failed to create subdirectory in data directory")?;
+
+    Ok(path)
+}
+
+fn get_config_path() -> anyhow::Result<PathBuf> {
+    let mut path = dirs::config_dir().context("failed to get config directory")?;
+    path.extend(["luna", "Luna.toml"]);
+
+    fs::create_dir_all(path.parent().unwrap())
+        .context("failed to create subdirectory in config directory")?;
+
+    Ok(path)
 }
