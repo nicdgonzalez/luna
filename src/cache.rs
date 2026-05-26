@@ -41,20 +41,33 @@ where
             .unwrap_or_default();
     }
 
+    fn save(&mut self) -> Result<(), R::Err> {
+        self.repo.save(&self.data)
+    }
+
     /// Represents the data stored within our repository.
     #[expect(unused)]
     #[must_use]
     pub fn data(&self) -> &CacheData {
         &self.data
     }
+
+    /// Last attempt at retrieving the user's location (this is to avoid hitting any rate limits).
+    pub fn last_location_attempt(&self) -> Option<&DateTime<Local>> {
+        self.data.last_location_attempt.as_ref()
+    }
+
+    pub fn set_last_location_attempt(&mut self, now: DateTime<Local>) -> Result<(), R::Err> {
+        self.data.last_location_attempt = Some(now);
+        self.save()
+    }
 }
 
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 pub struct CacheData {
     last_update: DateTime<Local>,
-    sunrise: DateTime<Local>,
-    sunset: DateTime<Local>,
-    /// Last attempt at retrieving the user's location to avoid hitting the rate limit
+    sunrise: Option<DateTime<Local>>,
+    sunset: Option<DateTime<Local>>,
     last_location_attempt: Option<DateTime<Local>>,
 }
 

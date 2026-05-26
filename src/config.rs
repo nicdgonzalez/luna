@@ -41,11 +41,26 @@ where
             .unwrap_or_default();
     }
 
+    fn save(&mut self) -> Result<(), R::Err> {
+        self.repo.save(&self.data)
+    }
+
     /// Represents the data stored within our repository.
-    #[expect(unused)]
+    #[expect(unused, reason = "avoid leaking implementation details")]
     #[must_use]
     pub fn data(&self) -> &ConfigData {
         &self.data
+    }
+
+    /// Returns the stored geographic coordinates if both longitude and latitude are set.
+    pub fn coordinates(&self) -> Option<GeoCoordinate> {
+        self.data.location().coordinates()
+    }
+
+    pub fn set_coordinates(&mut self, coordinates: &GeoCoordinate) -> Result<(), R::Err> {
+        self.data.location.longitude = Some(coordinates.longitude);
+        self.data.location.latitude = Some(coordinates.latitude);
+        self.save()
     }
 }
 
@@ -109,7 +124,6 @@ pub struct Location {
     latitude: Option<f32>,
 }
 
-#[expect(unused)]
 #[derive(Debug, Clone, Copy)]
 pub struct GeoCoordinate {
     /// Position on the Earth horizontally
@@ -137,7 +151,6 @@ impl Location {
     }
 
     /// Returns the stored geographic coordinates if both longitude and latitude are set.
-    #[expect(unused)]
     pub fn coordinates(&self) -> Option<GeoCoordinate> {
         match (self.longitude, self.latitude) {
             (Some(longitude), Some(latitude)) => Some(GeoCoordinate {

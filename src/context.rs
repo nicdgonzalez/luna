@@ -40,12 +40,12 @@ impl Context {
         &mut self.state
     }
 
-    #[expect(unused)]
     #[must_use]
     pub fn config(&self) -> &Config<Arc<FileRepository>> {
         &self.config
     }
 
+    #[expect(unused)]
     #[must_use]
     pub fn config_mut(&mut self) -> &mut Config<Arc<FileRepository>> {
         &mut self.config
