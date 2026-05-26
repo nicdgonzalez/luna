@@ -45,19 +45,16 @@ impl Context {
         &self.config
     }
 
-    #[expect(unused)]
     #[must_use]
     pub fn config_mut(&mut self) -> &mut Config<Arc<FileRepository>> {
         &mut self.config
     }
 
-    #[expect(unused)]
     #[must_use]
     pub fn cache(&self) -> &Cache<Arc<FileRepository>> {
         &self.cache
     }
 
-    #[expect(unused)]
     #[must_use]
     pub fn cache_mut(&mut self) -> &mut Cache<Arc<FileRepository>> {
         &mut self.cache

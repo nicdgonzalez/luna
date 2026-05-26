@@ -13,6 +13,7 @@ mod config;
 mod context;
 mod repository;
 mod state;
+mod theme;
 
 use std::fs;
 use std::io::{self, Write as _};

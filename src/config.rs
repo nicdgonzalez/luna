@@ -4,6 +4,7 @@ use anyhow::Context as _;
 use chrono::NaiveTime;
 use tracing::warn;
 
+use crate::cache::Daylight;
 use crate::repository::Repository;
 
 #[derive(Debug)]
@@ -52,12 +53,20 @@ where
         &self.data
     }
 
+    pub fn fallback(&self) -> &Fallback {
+        &self.data.fallback
+    }
+
+    pub fn location(&self) -> &Location {
+        &self.data.location
+    }
+
     /// Returns the stored geographic coordinates if both longitude and latitude are set.
     pub fn coordinates(&self) -> Option<GeoCoordinate> {
         self.data.location().coordinates()
     }
 
-    pub fn set_coordinates(&mut self, coordinates: &GeoCoordinate) -> Result<(), R::Err> {
+    pub fn set_coordinates(&mut self, coordinates: GeoCoordinate) -> Result<(), R::Err> {
         self.data.location.longitude = Some(coordinates.longitude);
         self.data.location.latitude = Some(coordinates.latitude);
         self.save()
@@ -79,7 +88,6 @@ impl ConfigData {
         &self.fallback
     }
 
-    #[expect(unused)]
     #[must_use]
     pub fn location(&self) -> &Location {
         &self.location
@@ -115,6 +123,13 @@ impl Fallback {
     pub fn sunset(&self) -> &NaiveTime {
         &self.sunset
     }
+
+    pub fn daylight(&self) -> Daylight {
+        Daylight {
+            sunrise: self.sunrise,
+            sunset: self.sunset,
+        }
+    }
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -144,7 +159,6 @@ impl Default for Location {
 
 impl Location {
     /// Whether to use the user's current location to determine sunrise/sunset times
-    #[expect(unused)]
     #[must_use]
     pub const fn is_enabled(&self) -> bool {
         self.enabled

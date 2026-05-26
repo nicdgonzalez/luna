@@ -1,7 +1,7 @@
 use std::str::FromStr;
 
 use anyhow::Context as _;
-use chrono::{DateTime, Local};
+use chrono::{DateTime, Local, NaiveTime};
 use tracing::warn;
 
 use crate::repository::Repository;
@@ -61,14 +61,59 @@ where
         self.data.last_location_attempt = Some(now);
         self.save()
     }
+
+    pub fn daylight(&self) -> Option<Daylight> {
+        match (self.data.sunrise, self.data.sunset) {
+            (Some(sunrise), Some(sunset)) => Some(Daylight { sunrise, sunset }),
+            _ => None,
+        }
+    }
+
+    pub fn set_last_updated_at(&mut self, last_updated_at: &DateTime<Local>) -> Result<(), R::Err> {
+        self.data.last_updated_at = *last_updated_at;
+        self.save()
+    }
+
+    pub fn set_daylight(&mut self, daylight: Daylight) -> Result<(), R::Err> {
+        self.data.sunrise = Some(daylight.sunrise);
+        self.data.sunset = Some(daylight.sunset);
+        self.save()
+    }
 }
 
-#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, Copy, Default, serde::Serialize, serde::Deserialize)]
 pub struct CacheData {
-    last_update: DateTime<Local>,
-    sunrise: Option<DateTime<Local>>,
-    sunset: Option<DateTime<Local>>,
+    last_updated_at: DateTime<Local>,
+    sunrise: Option<NaiveTime>,
+    sunset: Option<NaiveTime>,
     last_location_attempt: Option<DateTime<Local>>,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct Daylight {
+    pub sunrise: NaiveTime,
+    pub sunset: NaiveTime,
+}
+
+impl Daylight {
+    #[expect(unused)]
+    pub const fn sunrise(&self) -> &NaiveTime {
+        &self.sunrise
+    }
+
+    #[expect(unused)]
+    pub const fn sunset(&self) -> &NaiveTime {
+        &self.sunset
+    }
+
+    pub fn is_daytime(&self, now: NaiveTime) -> bool {
+        if self.sunset < self.sunrise {
+            // The sun sets after midnight, so disregard it for now.
+            now >= self.sunrise
+        } else {
+            now >= self.sunrise && now < self.sunset
+        }
+    }
 }
 
 impl FromStr for CacheData {
