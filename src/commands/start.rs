@@ -25,116 +25,68 @@ impl Run for Start {
 
         loop {
             let next_tick = Instant::now() + interval;
-            let now = Local::now();
 
-            ctx.state_mut().reload(); // Ensure we have the latest changes.
-
-            if ctx.state().is_paused(&now) {
-                debug!("theme switcher is paused");
-                sleep_until(next_tick);
-                continue;
-            }
-
-            ctx.config_mut().reload();
-            ctx.cache_mut().reload();
-
-            let coordinates = ctx
-                .config()
-                .location()
-                .is_enabled()
-                .then_some(ctx.config().coordinates())
-                .flatten()
-                .or_else(|| {
-                    if ctx
-                        .cache()
-                        .last_location_attempt()
-                        .is_some_and(|last_attempt| {
-                            // Attempt to get the user's location once per day.
-                            now.date_naive() == last_attempt.date_naive()
-                        })
-                    {
-                        return None;
-                    }
-
-                    if let Err(err) = ctx.cache_mut().set_last_location_attempt(now) {
-                        error!("failed to cache last location attempt: {err}");
-                        return None; // Don't ping the API if we cannot track our attempt.
-                    }
-
-                    let coordinates = get_coordinates()?;
-
-                    if let Err(err) = ctx.config_mut().set_coordinates(coordinates) {
-                        error!("failed to set coordinates: {err}");
-                    }
-
-                    Some(coordinates)
-                });
-
-            let daylight = if let Some(coordinates) = coordinates {
-                (now.date_naive() == ctx.cache().last_updated_at().date_naive())
-                    .then_some(ctx.cache().daylight())
-                    .flatten()
-                    .or_else(|| {
-                        if let Err(err) = ctx.cache_mut().set_last_updated_at(&now) {
-                            error!("failed to cache last updated at: {err}");
-                            return None; // Don't ping the API if we cannot track our attempt.
-                        }
-
-                        let daylight = get_daylight(coordinates)?;
-
-                        if let Err(err) = ctx.cache_mut().set_daylight(daylight) {
-                            error!("failed to cache daylight times: {err}");
-                        }
-
-                        Some(daylight)
-                    })
-                    .unwrap_or(ctx.config().fallback().daylight())
-            } else {
-                ctx.config().fallback().daylight()
-            };
-
-            let current_theme = Theme::from_system().unwrap_or_default();
-            let target_theme = if daylight.is_daytime(now.time()) {
-                Theme::Light
-            } else {
-                Theme::Dark
-            };
-
-            if current_theme != target_theme {
-                debug!("updating theme: {current_theme} => {target_theme}");
-
-                if target_theme == ctx.state().theme() {
-                    debug!("manual theme override detected");
-                    // We already updated the theme, but the user manually changed it back.
-                    let next_theme_change = get_next_theme_change(&now, daylight);
-
-                    if let Err(err) = ctx.state_mut().pause_until(next_theme_change) {
-                        error!("failed to pause for manual override: {err}");
-                    }
-
-                    sleep_until(next_tick);
-                    continue;
-                }
-
-                if let Err(err) = ctx.state_mut().set_theme(target_theme) {
-                    error!("failed to cache current theme: {err}");
-                    warn!("manual override until next theme change may not work properly");
-                }
-
-                if let Err(err) = set_theme(target_theme) {
-                    error!("failed to set theme: {err}");
-
-                    if let Err(err) = ctx.state_mut().set_theme(current_theme) {
-                        error!("failed to revert theme: {err}");
-                        sleep_until(next_tick);
-                        continue;
-                    }
-                }
+            if let Err(err) = tick(ctx) {
+                error!("tick failed: {err}");
             }
 
             sleep_until(next_tick);
         }
     }
+}
+
+fn tick(ctx: &mut Context) -> anyhow::Result<()> {
+    let now = Local::now();
+
+    ctx.state_mut().reload(); // Ensure we have the latest changes.
+
+    if ctx.state().is_paused(&now) {
+        debug!("theme switcher is paused");
+        return Ok(());
+    }
+
+    ctx.config_mut().reload();
+    ctx.cache_mut().reload();
+
+    let coordinates = resolve_coordinates(ctx, &now);
+
+    let daylight = coordinates
+        .and_then(|coordinates| resolve_daylight(ctx, &now, coordinates))
+        .unwrap_or(ctx.config().fallback().daylight());
+
+    let current_theme = Theme::from_system().unwrap_or_default();
+    let target_theme = get_target_theme(daylight, &now);
+
+    if current_theme == target_theme {
+        return Ok(());
+    }
+
+    debug!("updating theme: {current_theme} => {target_theme}");
+
+    if is_manual_override(current_theme, target_theme, ctx.state().theme()) {
+        let next_theme_change = get_next_theme_change(daylight, &now);
+
+        if let Err(err) = ctx.state_mut().pause_until(next_theme_change) {
+            bail!("failed to pause for manual override: {err}");
+        }
+
+        return Ok(());
+    }
+
+    if let Err(err) = ctx.state_mut().set_theme(target_theme) {
+        error!("failed to cache current theme: {err}");
+        warn!("manual override until next theme change may not work properly");
+    }
+
+    if let Err(err) = set_theme(target_theme) {
+        error!("failed to set theme: {err}");
+
+        if let Err(err) = ctx.state_mut().set_theme(current_theme) {
+            bail!("failed to revert cached current theme: {err}");
+        }
+    }
+
+    Ok(())
 }
 
 /// Puts the current thread to sleep until at least the specified deadline has passed.
@@ -144,6 +96,66 @@ fn sleep_until(deadline: Instant) {
     if now < deadline {
         thread::sleep(deadline - now);
     }
+}
+
+fn resolve_coordinates(ctx: &mut Context, now: &DateTime<Local>) -> Option<GeoCoordinate> {
+    if !ctx.config().location().is_enabled() {
+        return None;
+    }
+
+    if let Some(coordinates) = ctx.config().coordinates() {
+        return Some(coordinates);
+    }
+
+    let was_attempted_today = ctx
+        .cache()
+        .last_location_attempt()
+        .is_some_and(|last_attempt| {
+            // Attempt to get the user's location once per day.
+            now.date_naive() == last_attempt.date_naive()
+        });
+
+    if was_attempted_today {
+        return None;
+    }
+
+    if let Err(err) = ctx.cache_mut().set_last_location_attempt(*now) {
+        error!("failed to cache last location attempt: {err}");
+        return None; // Don't ping the API if we cannot track our attempt.
+    }
+
+    let coordinates = get_coordinates()?;
+
+    if let Err(err) = ctx.config_mut().set_coordinates(coordinates) {
+        error!("failed to set coordinates: {err}");
+    }
+
+    Some(coordinates)
+}
+
+fn resolve_daylight(
+    ctx: &mut Context,
+    now: &DateTime<Local>,
+    coordinates: GeoCoordinate,
+) -> Option<Daylight> {
+    let was_updated_today = now.date_naive() == ctx.cache().last_updated_at().date_naive();
+
+    if was_updated_today && let Some(daylight) = ctx.cache().daylight() {
+        return Some(daylight);
+    }
+
+    if let Err(err) = ctx.cache_mut().set_last_updated_at(now) {
+        error!("failed to cache last updated at: {err}");
+        return None; // Don't ping the API if we cannot track our attempt.
+    }
+
+    let daylight = get_daylight(coordinates)?;
+
+    if let Err(err) = ctx.cache_mut().set_daylight(daylight) {
+        error!("failed to cache daylight times: {err}");
+    }
+
+    Some(daylight)
 }
 
 /// Query external API to get the user's geographic location.
@@ -219,7 +231,19 @@ fn get_daylight(coordinates: GeoCoordinate) -> Option<Daylight> {
     })
 }
 
-fn get_next_theme_change(now: &DateTime<Local>, daylight: Daylight) -> DateTime<Local> {
+fn get_target_theme(daylight: Daylight, now: &DateTime<Local>) -> Theme {
+    if daylight.is_daytime(now.time()) {
+        Theme::Light
+    } else {
+        Theme::Dark
+    }
+}
+
+fn is_manual_override(current: Theme, target: Theme, cached: Theme) -> bool {
+    current != target && target == cached
+}
+
+fn get_next_theme_change(daylight: Daylight, now: &DateTime<Local>) -> DateTime<Local> {
     let is_daytime = daylight.is_daytime(now.time());
 
     let &time = if is_daytime {
