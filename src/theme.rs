@@ -1,10 +1,11 @@
+use std::fmt;
 use std::process::Command;
 use std::str::FromStr;
 
 use anyhow::{Context as _, anyhow};
 use tracing::warn;
 
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum Theme {
     #[default]
     Light,
@@ -27,10 +28,10 @@ impl Theme {
             .unwrap_or_default())
     }
 
-    pub fn as_color_scheme(&self) -> &'static str {
-        match *self {
+    pub fn as_color_scheme(self) -> &'static str {
+        match self {
             Self::Light => "default",
-            Self::Dark => "prefers-dark",
+            Self::Dark => "prefer-dark",
         }
     }
 }
@@ -41,8 +42,17 @@ impl FromStr for Theme {
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
             "default" => Ok(Self::Light),
-            "prefers-dark" => Ok(Self::Dark),
+            "prefer-dark" => Ok(Self::Dark),
             other => Err(anyhow!("unknown gsettings color-scheme: {other}")),
+        }
+    }
+}
+
+impl fmt::Display for Theme {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match *self {
+            Self::Light => "Light".fmt(f),
+            Self::Dark => "Dark".fmt(f),
         }
     }
 }

@@ -40,21 +40,16 @@ struct Parser {
 }
 
 fn main() -> ExitCode {
-    tokio::runtime::Builder::new_current_thread()
-        .build()
-        .unwrap()
-        .block_on(async {
-            try_main().unwrap_or_else(|err| {
-                let mut stderr = io::stderr().lock();
-                writeln!(stderr, "{} failed", env!("CARGO_PKG_NAME")).ok();
+    try_main().unwrap_or_else(|err| {
+        let mut stderr = io::stderr().lock();
+        writeln!(stderr, "{} failed", env!("CARGO_PKG_NAME")).ok();
 
-                for cause in err.chain() {
-                    writeln!(stderr, "  {}: {}", "Cause".bold(), cause).ok();
-                }
+        for cause in err.chain() {
+            writeln!(stderr, "  {}: {}", "Cause".bold(), cause).ok();
+        }
 
-                ExitCode::FAILURE
-            })
-        })
+        ExitCode::FAILURE
+    })
 }
 
 fn try_main() -> anyhow::Result<ExitCode> {
@@ -74,9 +69,15 @@ fn try_main() -> anyhow::Result<ExitCode> {
 
     let repo = Arc::new(FileRepository::new(state_path, config_path, cache_path));
 
-    let state = State::from_repo_or_default(repo.clone());
-    let config = Config::from_repo_or_default(repo.clone());
-    let cache = Cache::from_repo_or_default(repo.clone());
+    let mut state = State::from_repo_or_default(repo.clone());
+    state.save().context("failed to save initial state")?;
+
+    let mut config = Config::from_repo_or_default(repo.clone());
+    config.save().context("failed to save initial config")?;
+
+    let mut cache = Cache::from_repo_or_default(repo.clone());
+    cache.save().context("failed to save initial cache")?;
+
     let ctx = Context::new(state, config, cache);
 
     args.subcommand.run(ctx).map(|()| ExitCode::SUCCESS)

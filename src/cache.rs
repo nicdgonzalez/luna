@@ -17,13 +17,6 @@ where
     R: Repository<CacheData>,
 {
     /// Construct a new state manager using data from the repository.
-    #[expect(unused, reason = "not needed, but for sake of completeness...")]
-    pub fn from_repo(repo: R) -> Result<Self, R::Err> {
-        let data = repo.load()?;
-        Ok(Self { repo, data })
-    }
-
-    /// Construct a new state manager using data from the repository.
     /// Upon failure, load using default data instead.
     #[must_use]
     pub fn from_repo_or_default(repo: R) -> Self {
@@ -32,24 +25,17 @@ where
     }
 
     /// Synchronize our data with the repository.
-    #[expect(unused)]
     pub fn reload(&mut self) {
         self.data = self
             .repo
             .load()
-            .inspect_err(|err| warn!("failed to load existing state: {err}"))
+            .inspect_err(|err| warn!("failed to load existing cache: {err}"))
             .unwrap_or_default();
     }
 
-    fn save(&mut self) -> Result<(), R::Err> {
+    /// Helper function to save current data to the repository.
+    pub fn save(&mut self) -> Result<(), R::Err> {
         self.repo.save(&self.data)
-    }
-
-    /// Represents the data stored within our repository.
-    #[expect(unused)]
-    #[must_use]
-    pub fn data(&self) -> &CacheData {
-        &self.data
     }
 
     /// Last attempt at retrieving the user's location (this is to avoid hitting any rate limits).
@@ -62,16 +48,21 @@ where
         self.save()
     }
 
-    pub fn daylight(&self) -> Option<Daylight> {
-        match (self.data.sunrise, self.data.sunset) {
-            (Some(sunrise), Some(sunset)) => Some(Daylight { sunrise, sunset }),
-            _ => None,
-        }
+    #[must_use]
+    pub fn last_updated_at(&self) -> &DateTime<Local> {
+        &self.data.last_updated_at
     }
 
     pub fn set_last_updated_at(&mut self, last_updated_at: &DateTime<Local>) -> Result<(), R::Err> {
         self.data.last_updated_at = *last_updated_at;
         self.save()
+    }
+
+    pub fn daylight(&self) -> Option<Daylight> {
+        match (self.data.sunrise, self.data.sunset) {
+            (Some(sunrise), Some(sunset)) => Some(Daylight { sunrise, sunset }),
+            _ => None,
+        }
     }
 
     pub fn set_daylight(&mut self, daylight: Daylight) -> Result<(), R::Err> {
@@ -96,12 +87,10 @@ pub struct Daylight {
 }
 
 impl Daylight {
-    #[expect(unused)]
     pub const fn sunrise(&self) -> &NaiveTime {
         &self.sunrise
     }
 
-    #[expect(unused)]
     pub const fn sunset(&self) -> &NaiveTime {
         &self.sunset
     }

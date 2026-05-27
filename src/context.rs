@@ -105,7 +105,7 @@ impl Repository<ConfigData> for FileRepository {
 
     fn save(&self, data: &ConfigData) -> Result<(), Self::Err> {
         let contents = toml::to_string_pretty(data).context("failed to serialize data")?;
-        fs::write(&self.state, contents).context("failed to write to file")
+        fs::write(&self.config, contents).context("failed to write to file")
     }
 }
 
@@ -120,6 +120,6 @@ impl Repository<CacheData> for FileRepository {
 
     fn save(&self, data: &CacheData) -> Result<(), Self::Err> {
         let contents = serde_json::to_string_pretty(data).context("failed to serialize data")?;
-        fs::write(&self.state, contents).context("failed to write to file")
+        fs::write(&self.cache, contents).context("failed to write to file")
     }
 }

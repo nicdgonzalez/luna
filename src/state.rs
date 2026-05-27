@@ -5,6 +5,7 @@ use chrono::{DateTime, Local};
 use tracing::warn;
 
 use crate::repository::Repository;
+use crate::theme::Theme;
 
 #[derive(Debug)]
 pub struct State<R> {
@@ -33,8 +34,8 @@ where
             .unwrap_or_default();
     }
 
-    /// Helper function for saving data to a persistent storage.
-    fn save(&mut self) -> Result<(), R::Err> {
+    /// Helper function to save current data to the repository.
+    pub fn save(&mut self) -> Result<(), R::Err> {
         self.repo.save(&self.data)
     }
 
@@ -45,7 +46,6 @@ where
     }
 
     /// Pause the automatic theme switcher until the provided deadline.
-    #[expect(unused)]
     pub fn pause_until(&mut self, deadline: DateTime<Local>) -> Result<(), R::Err> {
         self.data.pause = Some(Pause::Until(deadline));
         self.save()
@@ -68,11 +68,22 @@ where
     pub fn data(&self) -> &StateData {
         &self.data
     }
+
+    #[must_use]
+    pub fn theme(&self) -> Theme {
+        self.data.theme
+    }
+
+    pub fn set_theme(&mut self, current_theme: Theme) -> Result<(), R::Err> {
+        self.data.theme = current_theme;
+        self.save()
+    }
 }
 
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 pub struct StateData {
     pause: Option<Pause>,
+    theme: Theme, // To track whether the user manually changed the theme.
 }
 
 impl StateData {

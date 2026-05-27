@@ -1,9 +1,11 @@
+use std::process::Command;
 use std::thread;
 use std::time::{Duration, Instant};
 
-use chrono::{Local, NaiveTime};
+use anyhow::{Context as _, bail};
+use chrono::{DateTime, Days, Local, NaiveTime, TimeZone};
 use reqwest::blocking::Client;
-use tracing::{error, warn};
+use tracing::{debug, error, warn};
 
 use crate::cache::Daylight;
 use crate::commands::prelude::*;
@@ -25,13 +27,16 @@ impl Run for Start {
             let next_tick = Instant::now() + interval;
             let now = Local::now();
 
-            let state = ctx.state_mut();
-            state.reload(); // Ensure we have the latest changes.
+            ctx.state_mut().reload(); // Ensure we have the latest changes.
 
-            if state.is_paused(&now) {
+            if ctx.state().is_paused(&now) {
+                debug!("theme switcher is paused");
                 sleep_until(next_tick);
                 continue;
             }
+
+            ctx.config_mut().reload();
+            ctx.cache_mut().reload();
 
             let coordinates = ctx
                 .config()
@@ -66,8 +71,9 @@ impl Run for Start {
                 });
 
             let daylight = if let Some(coordinates) = coordinates {
-                ctx.cache()
-                    .daylight()
+                (now.date_naive() == ctx.cache().last_updated_at().date_naive())
+                    .then_some(ctx.cache().daylight())
+                    .flatten()
                     .or_else(|| {
                         if let Err(err) = ctx.cache_mut().set_last_updated_at(&now) {
                             error!("failed to cache last updated at: {err}");
@@ -88,14 +94,41 @@ impl Run for Start {
             };
 
             let current_theme = Theme::from_system().unwrap_or_default();
-
-            if daylight.is_daytime(now.time()) {
-                if current_theme != Theme::Light {
-                    // Set theme
-                }
+            let target_theme = if daylight.is_daytime(now.time()) {
+                Theme::Light
             } else {
-                if current_theme != Theme::Dark {
-                    // Set theme
+                Theme::Dark
+            };
+
+            if current_theme != target_theme {
+                debug!("updating theme: {current_theme} => {target_theme}");
+
+                if target_theme == ctx.state().theme() {
+                    debug!("manual theme override detected");
+                    // We already updated the theme, but the user manually changed it back.
+                    let next_theme_change = get_next_theme_change(&now, daylight);
+
+                    if let Err(err) = ctx.state_mut().pause_until(next_theme_change) {
+                        error!("failed to pause for manual override: {err}");
+                    }
+
+                    sleep_until(next_tick);
+                    continue;
+                }
+
+                if let Err(err) = ctx.state_mut().set_theme(target_theme) {
+                    error!("failed to cache current theme: {err}");
+                    warn!("manual override until next theme change may not work properly");
+                }
+
+                if let Err(err) = set_theme(target_theme) {
+                    error!("failed to set theme: {err}");
+
+                    if let Err(err) = ctx.state_mut().set_theme(current_theme) {
+                        error!("failed to revert theme: {err}");
+                        sleep_until(next_tick);
+                        continue;
+                    }
                 }
             }
 
@@ -121,6 +154,7 @@ fn get_coordinates() -> Option<GeoCoordinate> {
         latitude: f32,
     }
 
+    debug!("querying external API for geographic location");
     let response = Client::new()
         .get("https://freeipapi.com/api/json")
         .timeout(Duration::from_secs(10))
@@ -162,6 +196,7 @@ fn get_daylight(coordinates: GeoCoordinate) -> Option<Daylight> {
         latitude = coordinates.latitude
     );
 
+    debug!("querying external API for sunrise/sunset times");
     let response = Client::new()
         .get(url)
         .timeout(Duration::from_secs(10))
@@ -182,4 +217,41 @@ fn get_daylight(coordinates: GeoCoordinate) -> Option<Daylight> {
         sunrise: data.results.sunrise,
         sunset: data.results.sunset,
     })
+}
+
+fn get_next_theme_change(now: &DateTime<Local>, daylight: Daylight) -> DateTime<Local> {
+    let is_daytime = daylight.is_daytime(now.time());
+
+    let &time = if is_daytime {
+        daylight.sunset()
+    } else {
+        daylight.sunrise()
+    };
+
+    let date = if is_daytime && daylight.sunset() < daylight.sunrise() {
+        now.date_naive().checked_add_days(Days::new(1)).unwrap()
+    } else {
+        now.date_naive()
+    };
+
+    let datetime = date.and_time(time);
+    Local.from_local_datetime(&datetime).unwrap()
+}
+
+fn set_theme(theme: Theme) -> anyhow::Result<()> {
+    let status = Command::new("gsettings")
+        .args([
+            "set",
+            "org.gnome.desktop.interface",
+            "color-scheme",
+            theme.as_color_scheme(),
+        ])
+        .status()
+        .context("failed to execute gsettings")?;
+
+    match status.code() {
+        Some(0) => Ok(()),
+        Some(code) => bail!("failed with exit code: {code}"),
+        None => bail!("process terminated due to signal"),
+    }
 }

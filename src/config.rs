@@ -18,13 +18,6 @@ where
     R: Repository<ConfigData>,
 {
     /// Construct a new configuration manager using data from the repository.
-    #[expect(unused, reason = "not needed, but for sake of completeness...")]
-    pub fn from_repo(repo: R) -> Result<Self, R::Err> {
-        let data = repo.load()?;
-        Ok(Self { repo, data })
-    }
-
-    /// Construct a new configuration manager using data from the repository.
     /// Upon failure, load using default data instead.
     #[must_use]
     pub fn from_repo_or_default(repo: R) -> Self {
@@ -33,7 +26,6 @@ where
     }
 
     /// Synchronize our data with the repository.
-    #[expect(unused)]
     pub fn reload(&mut self) {
         self.data = self
             .repo
@@ -42,15 +34,9 @@ where
             .unwrap_or_default();
     }
 
-    fn save(&mut self) -> Result<(), R::Err> {
+    /// Helper function to save current data to the repository.
+    pub fn save(&mut self) -> Result<(), R::Err> {
         self.repo.save(&self.data)
-    }
-
-    /// Represents the data stored within our repository.
-    #[expect(unused, reason = "avoid leaking implementation details")]
-    #[must_use]
-    pub fn data(&self) -> &ConfigData {
-        &self.data
     }
 
     pub fn fallback(&self) -> &Fallback {
