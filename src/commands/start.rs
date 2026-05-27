@@ -49,7 +49,6 @@ fn tick(ctx: &mut Context) -> anyhow::Result<()> {
     ctx.cache_mut().reload();
 
     let coordinates = resolve_coordinates(ctx, &now);
-
     let daylight = coordinates
         .and_then(|coordinates| resolve_daylight(ctx, &now, coordinates))
         .unwrap_or(ctx.config().fallback().daylight());
@@ -64,11 +63,12 @@ fn tick(ctx: &mut Context) -> anyhow::Result<()> {
     debug!("updating theme: {current_theme} => {target_theme}");
 
     if is_manual_override(current_theme, target_theme, ctx.state().theme()) {
+        debug!("manual override detected");
         let next_theme_change = get_next_theme_change(daylight, &now);
 
-        if let Err(err) = ctx.state_mut().pause_until(next_theme_change) {
-            bail!("failed to pause for manual override: {err}");
-        }
+        ctx.state_mut()
+            .pause_until(next_theme_change)
+            .context("failed to pause for manual override")?;
 
         return Ok(());
     }
@@ -262,6 +262,7 @@ fn get_next_theme_change(daylight: Daylight, now: &DateTime<Local>) -> DateTime<
     Local.from_local_datetime(&datetime).unwrap()
 }
 
+/// Update the system theme.
 fn set_theme(theme: Theme) -> anyhow::Result<()> {
     let status = Command::new("gsettings")
         .args([
