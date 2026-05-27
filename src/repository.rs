@@ -1,6 +1,9 @@
 use std::fmt::Display;
 use std::sync::Arc;
 
+// This is an oversimplification of what the repository pattern should look like.
+// I did it this way because for this specific project it works.
+
 pub trait Repository<T> {
     type Err: Display;
 
