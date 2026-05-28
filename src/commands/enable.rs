@@ -4,6 +4,7 @@ use anyhow::Context as _;
 use colored::Colorize as _;
 
 use crate::commands::prelude::*;
+use crate::state::{PauseState, StateRepository};
 use crate::theme::Theme;
 
 #[derive(Debug, Clone, clap::Args)]
@@ -11,7 +12,12 @@ pub struct Enable;
 
 impl Run for Enable {
     fn run(&self, ctx: &mut Context) -> anyhow::Result<()> {
-        if ctx.state().data().pause().is_none() {
+        let pause_state = ctx
+            .store()
+            .pause_state()
+            .context("failed to get pause state")?;
+
+        if pause_state == PauseState::Active {
             writeln!(
                 io::stdout(),
                 "{}",
@@ -24,8 +30,11 @@ impl Run for Enable {
 
         let current_theme = Theme::from_system().context("failed to get current theme")?;
 
-        ctx.state_mut().resume()?;
-        ctx.state_mut().set_theme(current_theme)?;
+        ctx.store()
+            .set_pause_state(PauseState::Active)
+            .context("failed to set pause state")?;
+
+        ctx.store().set_theme(current_theme)?;
 
         writeln!(
             io::stdout(),

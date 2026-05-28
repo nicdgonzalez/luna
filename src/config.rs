@@ -1,89 +1,59 @@
 use std::str::FromStr;
 
-use anyhow::Context as _;
 use chrono::NaiveTime;
-use tracing::warn;
+use serde::{Deserialize, Serialize};
 
-use crate::cache::Daylight;
-use crate::repository::Repository;
+/// Details common operations on the application's configuration.
+pub trait ConfigRepository {
+    type Err;
 
-#[derive(Debug)]
-pub struct Config<R> {
-    repo: R,
-    data: ConfigData,
+    /// Get the full application configuration.
+    fn config(&self) -> Result<Config, Self::Err>;
+
+    /// Persist the full application configuration.
+    fn set_config(&self, data: Config) -> Result<(), Self::Err>;
+
+    /// Default sunrise/sunset values used when location-based calculations are unavailable.
+    fn fallback(&self) -> Result<Fallback, Self::Err>;
+
+    /// Persist the fallback sunrise/sunset values.
+    #[expect(dead_code)]
+    fn set_fallback(&self, fallback: Fallback) -> Result<(), Self::Err>;
+
+    /// Geographical position used for sunrise/sunset calculations.
+    fn location(&self) -> Result<Option<GeoCoordinate>, Self::Err>;
+
+    /// Persist the geographical position used for sunrise/sunset calculations.
+    fn set_location(&self, location: GeoCoordinate) -> Result<(), Self::Err>;
+
+    /// Whether location-based sunrise/sunset calculations are enabled.
+    fn location_enabled(&self) -> Result<bool, Self::Err>;
+
+    /// Enable or disable location-based sunrise/sunset calculations.
+    #[expect(dead_code)]
+    fn set_location_enabled(&self, enabled: bool) -> Result<(), Self::Err>;
 }
 
-impl<R> Config<R>
-where
-    R: Repository<ConfigData>,
-{
-    /// Construct a new configuration manager using data from the repository.
-    /// Upon failure, load using default data instead.
-    #[must_use]
-    pub fn from_repo_or_default(repo: R) -> Self {
-        let data = repo.load().unwrap_or_default();
-        Self { repo, data }
-    }
-
-    /// Synchronize our data with the repository.
-    pub fn reload(&mut self) {
-        self.data = self
-            .repo
-            .load()
-            .inspect_err(|err| warn!("failed to load existing configuration: {err}"))
-            .unwrap_or_default();
-    }
-
-    /// Helper function to save current data to the repository.
-    pub fn save(&mut self) -> Result<(), R::Err> {
-        self.repo.save(&self.data)
-    }
-
-    pub fn fallback(&self) -> &Fallback {
-        &self.data.fallback
-    }
-
-    pub fn location(&self) -> &Location {
-        &self.data.location
-    }
-
-    /// Returns the stored geographic coordinates if both longitude and latitude are set.
-    pub fn coordinates(&self) -> Option<GeoCoordinate> {
-        self.data.location().coordinates()
-    }
-
-    pub fn set_coordinates(&mut self, coordinates: GeoCoordinate) -> Result<(), R::Err> {
-        self.data.location.longitude = Some(coordinates.longitude);
-        self.data.location.latitude = Some(coordinates.latitude);
-        self.save()
-    }
-}
-
-#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
-pub struct ConfigData {
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct Config {
     /// Default values for when location-based sunrise/sunset times are not available
-    fallback: Fallback,
+    pub fallback: Fallback,
     /// Geographical position for determining sunrise/sunset times
-    location: Location,
+    pub location: Location,
 }
 
-impl ConfigData {
-    #[expect(unused)]
-    #[must_use]
-    pub fn fallback(&self) -> &Fallback {
-        &self.fallback
-    }
+impl FromStr for Config {
+    type Err = toml::de::Error;
 
-    #[must_use]
-    pub fn location(&self) -> &Location {
-        &self.location
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        toml::from_str(s)
     }
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct Fallback {
-    sunrise: NaiveTime,
-    sunset: NaiveTime,
+    pub sunrise: NaiveTime,
+    pub sunset: NaiveTime,
 }
 
 impl Default for Fallback {
@@ -96,20 +66,6 @@ impl Default for Fallback {
 }
 
 impl Fallback {
-    /// Time to turn on light mode
-    #[expect(unused)]
-    #[must_use]
-    pub fn sunrise(&self) -> &NaiveTime {
-        &self.sunrise
-    }
-
-    /// Time to turn on dark mode
-    #[expect(unused)]
-    #[must_use]
-    pub fn sunset(&self) -> &NaiveTime {
-        &self.sunset
-    }
-
     pub fn daylight(&self) -> Daylight {
         Daylight {
             sunrise: self.sunrise,
@@ -118,19 +74,28 @@ impl Fallback {
     }
 }
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct Location {
-    enabled: bool,
-    longitude: Option<f32>,
-    latitude: Option<f32>,
+#[derive(Debug, Clone, Copy)]
+pub struct Daylight {
+    pub sunrise: NaiveTime,
+    pub sunset: NaiveTime,
 }
 
-#[derive(Debug, Clone, Copy)]
-pub struct GeoCoordinate {
-    /// Position on the Earth horizontally
-    pub longitude: f32,
-    /// Position on the Earth vertically
-    pub latitude: f32,
+impl Daylight {
+    pub fn is_daytime(&self, now: NaiveTime) -> bool {
+        if self.sunset < self.sunrise {
+            // The sun sets after midnight, so disregard it for now.
+            now >= self.sunrise
+        } else {
+            now >= self.sunrise && now < self.sunset
+        }
+    }
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct Location {
+    pub enabled: bool,
+    pub longitude: Option<f32>,
+    pub latitude: Option<f32>,
 }
 
 impl Default for Location {
@@ -143,29 +108,10 @@ impl Default for Location {
     }
 }
 
-impl Location {
-    /// Whether to use the user's current location to determine sunrise/sunset times
-    #[must_use]
-    pub const fn is_enabled(&self) -> bool {
-        self.enabled
-    }
-
-    /// Returns the stored geographic coordinates if both longitude and latitude are set.
-    pub fn coordinates(&self) -> Option<GeoCoordinate> {
-        match (self.longitude, self.latitude) {
-            (Some(longitude), Some(latitude)) => Some(GeoCoordinate {
-                longitude,
-                latitude,
-            }),
-            _ => None,
-        }
-    }
-}
-
-impl FromStr for ConfigData {
-    type Err = anyhow::Error;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        toml::from_str(s).context("failed to parse state")
-    }
+#[derive(Debug, Clone, Copy)]
+pub struct GeoCoordinate {
+    /// Position on the Earth horizontally
+    pub longitude: f32,
+    /// Position on the Earth vertically
+    pub latitude: f32,
 }

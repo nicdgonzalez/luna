@@ -1,114 +1,45 @@
 use std::str::FromStr;
 
-use anyhow::Context as _;
-use chrono::{DateTime, Local, NaiveTime};
-use tracing::warn;
+use chrono::{DateTime, Local, NaiveDate, NaiveTime};
+use serde::{Deserialize, Serialize};
 
-use crate::repository::Repository;
+use crate::config::Daylight;
 
-#[derive(Debug)]
-pub struct Cache<R> {
-    repo: R,
-    data: CacheData,
+pub trait CacheRepository {
+    type Err;
+
+    fn cache(&self) -> Result<Cache, Self::Err>;
+
+    fn set_cache(&self, data: Cache) -> Result<(), Self::Err>;
+
+    fn daylight(&self) -> Result<Option<Daylight>, Self::Err>;
+
+    fn set_daylight(&self, daylight: Daylight) -> Result<(), Self::Err>;
+
+    fn last_updated_at(&self) -> Result<Option<NaiveDate>, Self::Err>;
+
+    fn set_last_updated_at(&self, last_update_at: NaiveDate) -> Result<(), Self::Err>;
+
+    fn last_location_attempt(&self) -> Result<Option<DateTime<Local>>, Self::Err>;
+
+    fn set_last_location_attempt(
+        &self,
+        last_location_attempt: DateTime<Local>,
+    ) -> Result<(), Self::Err>;
 }
 
-impl<R> Cache<R>
-where
-    R: Repository<CacheData>,
-{
-    /// Construct a new state manager using data from the repository.
-    /// Upon failure, load using default data instead.
-    #[must_use]
-    pub fn from_repo_or_default(repo: R) -> Self {
-        let data = repo.load().unwrap_or_default();
-        Self { repo, data }
-    }
-
-    /// Synchronize our data with the repository.
-    pub fn reload(&mut self) {
-        self.data = self
-            .repo
-            .load()
-            .inspect_err(|err| warn!("failed to load existing cache: {err}"))
-            .unwrap_or_default();
-    }
-
-    /// Helper function to save current data to the repository.
-    pub fn save(&mut self) -> Result<(), R::Err> {
-        self.repo.save(&self.data)
-    }
-
-    /// Last attempt at retrieving the user's location (this is to avoid hitting any rate limits).
-    pub fn last_location_attempt(&self) -> Option<&DateTime<Local>> {
-        self.data.last_location_attempt.as_ref()
-    }
-
-    pub fn set_last_location_attempt(&mut self, now: DateTime<Local>) -> Result<(), R::Err> {
-        self.data.last_location_attempt = Some(now);
-        self.save()
-    }
-
-    #[must_use]
-    pub fn last_updated_at(&self) -> &DateTime<Local> {
-        &self.data.last_updated_at
-    }
-
-    pub fn set_last_updated_at(&mut self, last_updated_at: &DateTime<Local>) -> Result<(), R::Err> {
-        self.data.last_updated_at = *last_updated_at;
-        self.save()
-    }
-
-    pub fn daylight(&self) -> Option<Daylight> {
-        match (self.data.sunrise, self.data.sunset) {
-            (Some(sunrise), Some(sunset)) => Some(Daylight { sunrise, sunset }),
-            _ => None,
-        }
-    }
-
-    pub fn set_daylight(&mut self, daylight: Daylight) -> Result<(), R::Err> {
-        self.data.sunrise = Some(daylight.sunrise);
-        self.data.sunset = Some(daylight.sunset);
-        self.save()
-    }
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize)]
+pub struct Cache {
+    pub sunrise: Option<NaiveTime>,
+    pub sunset: Option<NaiveTime>,
+    pub last_updated_at: Option<NaiveDate>,
+    pub last_location_attempt: Option<DateTime<Local>>,
 }
 
-#[derive(Debug, Clone, Copy, Default, serde::Serialize, serde::Deserialize)]
-pub struct CacheData {
-    last_updated_at: DateTime<Local>,
-    sunrise: Option<NaiveTime>,
-    sunset: Option<NaiveTime>,
-    last_location_attempt: Option<DateTime<Local>>,
-}
-
-#[derive(Debug, Clone, Copy)]
-pub struct Daylight {
-    pub sunrise: NaiveTime,
-    pub sunset: NaiveTime,
-}
-
-impl Daylight {
-    pub const fn sunrise(&self) -> &NaiveTime {
-        &self.sunrise
-    }
-
-    pub const fn sunset(&self) -> &NaiveTime {
-        &self.sunset
-    }
-
-    pub fn is_daytime(&self, now: NaiveTime) -> bool {
-        if self.sunset < self.sunrise {
-            // The sun sets after midnight, so disregard it for now.
-            now >= self.sunrise
-        } else {
-            now >= self.sunrise && now < self.sunset
-        }
-    }
-}
-
-impl FromStr for CacheData {
-    type Err = anyhow::Error;
+impl FromStr for Cache {
+    type Err = serde_json::Error;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        serde_json::from_str(s).context("failed to parse state")
+        serde_json::from_str(s)
     }
 }

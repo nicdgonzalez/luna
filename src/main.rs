@@ -11,15 +11,14 @@ mod cache;
 mod commands;
 mod config;
 mod context;
-mod repository;
 mod state;
+mod store;
 mod theme;
 
 use std::fs;
 use std::io::{self, Write as _};
 use std::path::PathBuf;
 use std::process::ExitCode;
-use std::sync::Arc;
 
 use anyhow::Context as _;
 use clap::Parser as _;
@@ -27,10 +26,8 @@ use colored::Colorize;
 use tracing_subscriber::EnvFilter;
 use tracing_subscriber::prelude::*;
 
-use crate::cache::Cache;
-use crate::config::Config;
-use crate::context::{Context, FileRepository};
-use crate::state::State;
+use crate::context::Context;
+use crate::store::FileStore;
 
 /// Automatically update the system theme based on local sunrise and sunset times.
 #[derive(Debug, clap::Parser)]
@@ -63,22 +60,12 @@ fn try_main() -> anyhow::Result<ExitCode> {
 
     let args = Parser::parse();
 
-    let state_path = get_state_path()?;
-    let config_path = get_config_path()?;
-    let cache_path = get_cache_path()?;
+    let state = get_state_path()?;
+    let config = get_config_path()?;
+    let cache = get_cache_path()?;
+    let store = FileStore::new(state, config, cache);
 
-    let repo = Arc::new(FileRepository::new(state_path, config_path, cache_path));
-
-    let mut state = State::from_repo_or_default(repo.clone());
-    state.save().context("failed to save initial state")?;
-
-    let mut config = Config::from_repo_or_default(repo.clone());
-    config.save().context("failed to save initial config")?;
-
-    let mut cache = Cache::from_repo_or_default(repo.clone());
-    cache.save().context("failed to save initial cache")?;
-
-    let ctx = Context::new(state, config, cache);
+    let ctx = Context::new(store);
 
     args.subcommand.run(ctx).map(|()| ExitCode::SUCCESS)
 }

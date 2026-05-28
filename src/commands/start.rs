@@ -5,11 +5,12 @@ use std::time::{Duration, Instant};
 use anyhow::{Context as _, bail};
 use chrono::{DateTime, Days, Local, NaiveTime, TimeZone};
 use reqwest::blocking::Client;
-use tracing::{debug, error, warn};
+use tracing::{debug, error, info, warn};
 
-use crate::cache::Daylight;
+use crate::cache::CacheRepository as _;
 use crate::commands::prelude::*;
-use crate::config::GeoCoordinate;
+use crate::config::{ConfigRepository as _, Daylight, GeoCoordinate};
+use crate::state::{PauseState, StateRepository as _};
 use crate::theme::Theme;
 
 #[derive(Debug, Clone, clap::Args)]
@@ -38,23 +39,27 @@ impl Run for Start {
 fn tick(ctx: &mut Context) -> anyhow::Result<()> {
     let now = Local::now();
 
-    ctx.state_mut().reload(); // Ensure we have the latest changes.
-
-    if ctx.state().is_paused(&now) {
+    if ctx.store().pause_state()?.is_paused(&now) {
         debug!("theme switcher is paused");
         return Ok(());
     }
 
-    ctx.config_mut().reload();
-    ctx.cache_mut().reload();
-
-    let coordinates = resolve_coordinates(ctx, &now);
+    let coordinates = resolve_coordinates(ctx, &now)?;
     let daylight = coordinates
-        .and_then(|coordinates| resolve_daylight(ctx, &now, coordinates))
-        .unwrap_or(ctx.config().fallback().daylight());
+        .and_then(|coordinates| {
+            resolve_daylight(ctx, &now, coordinates)
+                .inspect_err(|err| warn!("failed to resolve daylight times: {err}"))
+                .ok()
+        })
+        .unwrap_or(ctx.store().fallback().unwrap_or_default().daylight());
 
     let current_theme = Theme::from_system().unwrap_or_default();
     let target_theme = get_target_theme(daylight, &now);
+    let cached_theme = ctx
+        .store()
+        .theme()
+        .inspect_err(|err| warn!("failed to get cached theme: {err}"))
+        .unwrap_or_default();
 
     if current_theme == target_theme {
         return Ok(());
@@ -62,28 +67,28 @@ fn tick(ctx: &mut Context) -> anyhow::Result<()> {
 
     debug!("updating theme: {current_theme} => {target_theme}");
 
-    if is_manual_override(current_theme, target_theme, ctx.state().theme()) {
-        debug!("manual override detected");
+    if is_manual_override(current_theme, target_theme, cached_theme) {
+        info!("manual override detected");
         let next_theme_change = get_next_theme_change(daylight, &now);
 
-        ctx.state_mut()
-            .pause_until(next_theme_change)
+        ctx.store()
+            .set_pause_state(PauseState::Until(next_theme_change))
             .context("failed to pause for manual override")?;
 
         return Ok(());
     }
 
-    if let Err(err) = ctx.state_mut().set_theme(target_theme) {
-        error!("failed to cache current theme: {err}");
-        warn!("manual override until next theme change may not work properly");
-    }
+    // TODO: Consider doing a transaction/rollback system instead of resetting on failure.
+    ctx.store()
+        .set_theme(target_theme)
+        .context("failed to cache next theme")?;
 
-    if let Err(err) = set_theme(target_theme) {
+    if let Err(err) = set_system_theme(target_theme) {
         error!("failed to set theme: {err}");
 
-        if let Err(err) = ctx.state_mut().set_theme(current_theme) {
-            bail!("failed to revert cached current theme: {err}");
-        }
+        ctx.store()
+            .set_theme(current_theme)
+            .context("failed to revert cached theme after setting system theme failed")?;
     }
 
     Ok(())
@@ -98,68 +103,79 @@ fn sleep_until(deadline: Instant) {
     }
 }
 
-fn resolve_coordinates(ctx: &mut Context, now: &DateTime<Local>) -> Option<GeoCoordinate> {
-    if !ctx.config().location().is_enabled() {
-        return None;
+fn resolve_coordinates(
+    ctx: &mut Context,
+    now: &DateTime<Local>,
+) -> anyhow::Result<Option<GeoCoordinate>> {
+    if !ctx.store().location_enabled().unwrap_or(false) {
+        return Ok(None);
     }
 
-    if let Some(coordinates) = ctx.config().coordinates() {
-        return Some(coordinates);
+    if let Some(coordinates) = ctx.store().location().unwrap_or(None) {
+        return Ok(Some(coordinates));
     }
 
     let was_attempted_today = ctx
-        .cache()
+        .store()
         .last_location_attempt()
+        .context("failed to get last location attempt")?
         .is_some_and(|last_attempt| {
             // Attempt to get the user's location once per day.
             now.date_naive() == last_attempt.date_naive()
         });
 
     if was_attempted_today {
-        return None;
+        bail!("already attempted to get geographic coordinates today");
     }
 
-    if let Err(err) = ctx.cache_mut().set_last_location_attempt(*now) {
-        error!("failed to cache last location attempt: {err}");
-        return None; // Don't ping the API if we cannot track our attempt.
-    }
+    ctx.store()
+        .set_last_location_attempt(*now)
+        .context("failed to cache last attempt")?;
 
     let coordinates = get_coordinates()?;
 
-    if let Err(err) = ctx.config_mut().set_coordinates(coordinates) {
-        error!("failed to set coordinates: {err}");
-    }
+    ctx.store()
+        .set_location(coordinates)
+        .context("failed to set coordinates: {err}")?;
 
-    Some(coordinates)
+    Ok(Some(coordinates))
 }
 
 fn resolve_daylight(
     ctx: &mut Context,
     now: &DateTime<Local>,
     coordinates: GeoCoordinate,
-) -> Option<Daylight> {
-    let was_updated_today = now.date_naive() == ctx.cache().last_updated_at().date_naive();
+) -> anyhow::Result<Daylight> {
+    let was_updated_today = ctx
+        .store()
+        .last_updated_at()
+        .context("failed to get last update timestamp")?
+        .is_some_and(|last_update| last_update == now.date_naive());
 
-    if was_updated_today && let Some(daylight) = ctx.cache().daylight() {
-        return Some(daylight);
+    if was_updated_today
+        && let Some(daylight) = ctx
+            .store()
+            .daylight()
+            .context("failed to get cached daylight times")?
+    {
+        return Ok(daylight);
     }
 
-    if let Err(err) = ctx.cache_mut().set_last_updated_at(now) {
-        error!("failed to cache last updated at: {err}");
-        return None; // Don't ping the API if we cannot track our attempt.
-    }
+    ctx.store()
+        .set_last_updated_at(now.date_naive())
+        .context("failed to cache last updated at: {err}")?;
 
     let daylight = get_daylight(coordinates)?;
 
-    if let Err(err) = ctx.cache_mut().set_daylight(daylight) {
-        error!("failed to cache daylight times: {err}");
-    }
+    ctx.store()
+        .set_daylight(daylight)
+        .context("failed to cache daylight times: {err}")?;
 
-    Some(daylight)
+    Ok(daylight)
 }
 
 /// Query external API to get the user's geographic location.
-fn get_coordinates() -> Option<GeoCoordinate> {
+fn get_coordinates() -> anyhow::Result<GeoCoordinate> {
     #[derive(serde::Deserialize)]
     struct Response {
         longitude: f32,
@@ -171,26 +187,23 @@ fn get_coordinates() -> Option<GeoCoordinate> {
         .get("https://freeipapi.com/api/json")
         .timeout(Duration::from_secs(10))
         .send()
-        .inspect_err(|err| warn!("failed to query API for geolocation: {err}"))
-        .ok()?;
+        .context("failed to query API for geolocation: {err}")?;
 
     let text = response
         .text()
-        .inspect_err(|err| warn!("response was not valid UTF-8: {err}"))
-        .ok()?;
+        .context("response was not valid UTF-8: {err}")?;
 
-    let data = serde_json::from_str::<Response>(&text)
-        .inspect_err(|err| warn!("failed to parse response: {err}"))
-        .ok()?;
+    let data =
+        serde_json::from_str::<Response>(&text).context("failed to parse response: {err}")?;
 
-    Some(GeoCoordinate {
+    Ok(GeoCoordinate {
         longitude: data.longitude,
         latitude: data.latitude,
     })
 }
 
 /// Query external API for sunrise and sunset times.
-fn get_daylight(coordinates: GeoCoordinate) -> Option<Daylight> {
+fn get_daylight(coordinates: GeoCoordinate) -> anyhow::Result<Daylight> {
     #[derive(serde::Deserialize)]
     struct Response {
         results: Results,
@@ -213,19 +226,16 @@ fn get_daylight(coordinates: GeoCoordinate) -> Option<Daylight> {
         .get(url)
         .timeout(Duration::from_secs(10))
         .send()
-        .inspect_err(|err| warn!("failed to query API for daylight: {err}"))
-        .ok()?;
+        .context("failed to query API for daylight: {err}")?;
 
     let text = response
         .text()
-        .inspect_err(|err| warn!("response was not valid UTF-8: {err}"))
-        .ok()?;
+        .context("response was not valid UTF-8: {err}")?;
 
-    let data = serde_json::from_str::<Response>(&text)
-        .inspect_err(|err| warn!("failed to parse response: {err}"))
-        .ok()?;
+    let data =
+        serde_json::from_str::<Response>(&text).context("failed to parse response: {err}")?;
 
-    Some(Daylight {
+    Ok(Daylight {
         sunrise: data.results.sunrise,
         sunset: data.results.sunset,
     })
@@ -246,13 +256,13 @@ fn is_manual_override(current: Theme, target: Theme, cached: Theme) -> bool {
 fn get_next_theme_change(daylight: Daylight, now: &DateTime<Local>) -> DateTime<Local> {
     let is_daytime = daylight.is_daytime(now.time());
 
-    let &time = if is_daytime {
-        daylight.sunset()
+    let time = if is_daytime {
+        daylight.sunset
     } else {
-        daylight.sunrise()
+        daylight.sunrise
     };
 
-    let date = if is_daytime && daylight.sunset() < daylight.sunrise() {
+    let date = if is_daytime && daylight.sunset < daylight.sunrise {
         now.date_naive().checked_add_days(Days::new(1)).unwrap()
     } else {
         now.date_naive()
@@ -263,7 +273,7 @@ fn get_next_theme_change(daylight: Daylight, now: &DateTime<Local>) -> DateTime<
 }
 
 /// Update the system theme.
-fn set_theme(theme: Theme) -> anyhow::Result<()> {
+fn set_system_theme(theme: Theme) -> anyhow::Result<()> {
     let status = Command::new("gsettings")
         .args([
             "set",
