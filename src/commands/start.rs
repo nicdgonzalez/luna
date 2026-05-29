@@ -29,6 +29,10 @@ impl Run for Start {
 
             if let Err(err) = tick(ctx) {
                 error!("tick failed: {err}");
+
+                for cause in err.chain() {
+                    error!("  Cause: {cause}");
+                }
             }
 
             sleep_until(next_tick);
@@ -38,9 +42,12 @@ impl Run for Start {
 
 fn tick(ctx: &mut Context) -> anyhow::Result<()> {
     let now = Local::now();
+    let pause_state = ctx
+        .store()
+        .pause_state()
+        .context("failed to get pause state")?;
 
-    if ctx.store().pause_state()?.is_paused(&now) {
-        debug!("theme switcher is paused");
+    if pause_state.is_paused(&now) {
         return Ok(());
     }
 

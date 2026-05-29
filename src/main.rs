@@ -26,7 +26,10 @@ use colored::Colorize;
 use tracing_subscriber::EnvFilter;
 use tracing_subscriber::prelude::*;
 
+use crate::cache::CacheRepository as _;
+use crate::config::ConfigRepository as _;
 use crate::context::Context;
+use crate::state::StateRepository as _;
 use crate::store::FileStore;
 
 /// Automatically update the system theme based on local sunrise and sunset times.
@@ -64,6 +67,10 @@ fn try_main() -> anyhow::Result<ExitCode> {
     let config = get_config_path()?;
     let cache = get_cache_path()?;
     let store = FileStore::new(state, config, cache);
+
+    store.set_state(store.state().unwrap_or_default())?;
+    store.set_config(store.config().unwrap_or_default())?;
+    store.set_cache(store.cache().unwrap_or_default())?;
 
     let ctx = Context::new(store);
 
