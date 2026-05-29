@@ -61,7 +61,7 @@ fn tick(ctx: &mut Context) -> anyhow::Result<()> {
         .unwrap_or(ctx.store().fallback().unwrap_or_default().daylight());
 
     let current_theme = Theme::from_system().unwrap_or_default();
-    let target_theme = get_target_theme(daylight, &now);
+    let target_theme = get_target_theme(daylight, now.time());
     let cached_theme = ctx
         .store()
         .theme()
@@ -248,8 +248,8 @@ fn get_daylight(coordinates: GeoCoordinate) -> anyhow::Result<Daylight> {
     })
 }
 
-fn get_target_theme(daylight: Daylight, now: &DateTime<Local>) -> Theme {
-    if daylight.is_daytime(now.time()) {
+fn get_target_theme(daylight: Daylight, time: NaiveTime) -> Theme {
+    if daylight.is_daytime(time) {
         Theme::Light
     } else {
         Theme::Dark
@@ -295,5 +295,59 @@ fn set_system_theme(theme: Theme) -> anyhow::Result<()> {
         Some(0) => Ok(()),
         Some(code) => bail!("failed with exit code: {code}"),
         None => bail!("process terminated due to signal"),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn daylight() -> Daylight {
+        Daylight {
+            sunrise: NaiveTime::from_hms_opt(6, 30, 0).unwrap(),
+            sunset: NaiveTime::from_hms_opt(18, 30, 0).unwrap(),
+        }
+    }
+
+    #[test]
+    fn before_sunrise_is_dark() {
+        let time = NaiveTime::from_hms_opt(2, 0, 0).unwrap();
+        let target_theme = get_target_theme(daylight(), time);
+        assert_eq!(target_theme, Theme::Dark);
+    }
+
+    #[test]
+    fn after_sunrise_is_light() {
+        let time = NaiveTime::from_hms_opt(10, 0, 0).unwrap();
+        let target_theme = get_target_theme(daylight(), time);
+        assert_eq!(target_theme, Theme::Light);
+    }
+
+    #[test]
+    fn at_sunrise_is_light() {
+        let time = NaiveTime::from_hms_opt(6, 30, 0).unwrap();
+        let target_theme = get_target_theme(daylight(), time);
+        assert_eq!(target_theme, Theme::Light);
+    }
+
+    #[test]
+    fn at_sunset_is_dark() {
+        let time = NaiveTime::from_hms_opt(18, 30, 0).unwrap();
+        let target_theme = get_target_theme(daylight(), time);
+        assert_eq!(target_theme, Theme::Dark);
+    }
+
+    fn daylight_sunset_next_day() -> Daylight {
+        Daylight {
+            sunrise: NaiveTime::from_hms_opt(6, 30, 0).unwrap(),
+            sunset: NaiveTime::from_hms_opt(2, 30, 0).unwrap(), // Sun sets on the next day
+        }
+    }
+
+    #[test]
+    fn at_midnight_sunset_next_day() {
+        let time = NaiveTime::from_hms_opt(0, 0, 0).unwrap();
+        let target_theme = get_target_theme(daylight_sunset_next_day(), time);
+        assert_eq!(target_theme, Theme::Light);
     }
 }

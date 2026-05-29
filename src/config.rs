@@ -83,8 +83,8 @@ pub struct Daylight {
 impl Daylight {
     pub fn is_daytime(&self, now: NaiveTime) -> bool {
         if self.sunset < self.sunrise {
-            // The sun sets after midnight, so disregard it for now.
-            now >= self.sunrise
+            // Indicates that the sun sets on the next day.
+            now < self.sunset || now >= self.sunrise
         } else {
             now >= self.sunrise && now < self.sunset
         }
