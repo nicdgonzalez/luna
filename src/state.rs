@@ -1,3 +1,4 @@
+use std::error::Error;
 use std::str::FromStr;
 
 use chrono::{DateTime, Local};
@@ -7,7 +8,7 @@ use crate::theme::Theme;
 
 /// Details common operations on the application's state.
 pub trait StateRepository {
-    type Err;
+    type Err: Error + Send + Sync + 'static;
 
     /// Get the full application state.
     fn state(&self) -> Result<State, Self::Err>;
@@ -48,7 +49,7 @@ impl FromStr for State {
 pub enum PauseState {
     /// Theme switching service is active (not paused).
     #[default]
-    Active,
+    None,
 
     /// Theme switching service is disabled until the given local date and time.
     Until(DateTime<Local>),
@@ -61,7 +62,7 @@ impl PauseState {
     /// Whether we are still paused based on the current time.
     pub fn is_paused(&self, now: &DateTime<Local>) -> bool {
         match *self {
-            Self::Active => false,
+            Self::None => false,
             Self::Indefinite => true,
             Self::Until(ref until) => now < until,
         }

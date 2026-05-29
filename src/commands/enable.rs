@@ -17,7 +17,7 @@ impl Run for Enable {
             .pause_state()
             .context("failed to get pause state")?;
 
-        if pause_state == PauseState::Active {
+        if pause_state == PauseState::None {
             writeln!(
                 io::stdout(),
                 "{}",
@@ -31,7 +31,7 @@ impl Run for Enable {
         let current_theme = Theme::from_system().context("failed to get current theme")?;
 
         ctx.store()
-            .set_pause_state(PauseState::Active)
+            .set_pause_state(PauseState::None)
             .context("failed to set pause state")?;
 
         ctx.store().set_theme(current_theme)?;

@@ -1,3 +1,4 @@
+use std::error::Error;
 use std::str::FromStr;
 
 use chrono::{DateTime, Local, NaiveDate, NaiveTime};
@@ -6,7 +7,7 @@ use serde::{Deserialize, Serialize};
 use crate::config::Daylight;
 
 pub trait CacheRepository {
-    type Err;
+    type Err: Error + Send + Sync + 'static;
 
     /// Get the full cache state.
     fn cache(&self) -> Result<Cache, Self::Err>;

@@ -1,3 +1,4 @@
+use std::error::Error;
 use std::str::FromStr;
 
 use chrono::NaiveTime;
@@ -5,7 +6,7 @@ use serde::{Deserialize, Serialize};
 
 /// Details common operations on the application's configuration.
 pub trait ConfigRepository {
-    type Err;
+    type Err: Error + Send + Sync + 'static;
 
     /// Get the full application configuration.
     fn config(&self) -> Result<Config, Self::Err>;
@@ -88,6 +89,10 @@ impl Daylight {
         } else {
             now >= self.sunrise && now < self.sunset
         }
+    }
+
+    pub fn sunset_is_next_day(&self) -> bool {
+        self.sunset < self.sunrise
     }
 }
 

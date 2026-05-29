@@ -5,12 +5,13 @@ use std::time::{Duration, Instant};
 use anyhow::{Context as _, bail};
 use chrono::{DateTime, Days, Local, NaiveTime, TimeZone};
 use reqwest::blocking::Client;
-use tracing::{debug, error, info, warn};
+use tracing::{error, info, warn};
 
-use crate::cache::CacheRepository as _;
+use crate::cache::CacheRepository;
 use crate::commands::prelude::*;
-use crate::config::{ConfigRepository as _, Daylight, GeoCoordinate};
-use crate::state::{PauseState, StateRepository as _};
+use crate::config::{ConfigRepository, Daylight, GeoCoordinate};
+use crate::state::{PauseState, StateRepository};
+use crate::store::FileStore;
 use crate::theme::Theme;
 
 #[derive(Debug, Clone, clap::Args)]
@@ -26,8 +27,9 @@ impl Run for Start {
 
         loop {
             let next_tick = Instant::now() + interval;
+            let now = Local::now();
 
-            if let Err(err) = tick(ctx) {
+            if let Err(err) = tick(ctx.store(), now) {
                 error!("tick failed: {err}");
 
                 for cause in err.chain() {
@@ -40,62 +42,82 @@ impl Run for Start {
     }
 }
 
-fn tick(ctx: &mut Context) -> anyhow::Result<()> {
-    let now = Local::now();
-    let pause_state = ctx
-        .store()
-        .pause_state()
-        .context("failed to get pause state")?;
+#[derive(Debug, Clone, Copy)]
+struct TickInput {
+    now: DateTime<Local>,
+    pause_state: PauseState,
+    current_theme: Theme,
+    cached_theme: Theme,
+    daylight: Daylight,
+}
 
-    if pause_state.is_paused(&now) {
-        return Ok(());
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TickAction {
+    None,
+    SetTheme(Theme),
+    PauseUntil(DateTime<Local>),
+}
+
+fn evaluate_tick(input: &TickInput) -> TickAction {
+    if input.pause_state.is_paused(&input.now) {
+        return TickAction::None;
     }
 
-    let coordinates = resolve_coordinates(ctx, &now)?;
+    let target_theme = get_target_theme(input.daylight, input.now.time());
+
+    if input.current_theme == target_theme {
+        return TickAction::None;
+    }
+
+    if is_manual_override(input.current_theme, target_theme, input.cached_theme) {
+        let next_theme_change = get_next_theme_change(input.daylight, &input.now);
+        return TickAction::PauseUntil(next_theme_change);
+    }
+
+    TickAction::SetTheme(target_theme)
+}
+
+fn tick(store: &FileStore, now: DateTime<Local>) -> anyhow::Result<()> {
+    let pause_state = store.pause_state().context("failed to get pause state")?;
+
+    let coordinates = resolve_coordinates(store, &now)?;
     let daylight = coordinates
         .and_then(|coordinates| {
-            resolve_daylight(ctx, &now, coordinates)
+            resolve_daylight(store, &now, coordinates)
                 .inspect_err(|err| warn!("failed to resolve daylight times: {err}"))
                 .ok()
         })
-        .unwrap_or(ctx.store().fallback().unwrap_or_default().daylight());
+        .unwrap_or(store.fallback().unwrap_or_default().daylight());
 
     let current_theme = Theme::from_system().unwrap_or_default();
-    let target_theme = get_target_theme(daylight, now.time());
-    let cached_theme = ctx
-        .store()
+    let cached_theme = store
         .theme()
         .inspect_err(|err| warn!("failed to get cached theme: {err}"))
         .unwrap_or_default();
 
-    if current_theme == target_theme {
-        return Ok(());
-    }
+    let input = TickInput {
+        now,
+        pause_state,
+        current_theme,
+        cached_theme,
+        daylight,
+    };
 
-    debug!("updating theme: {current_theme} => {target_theme}");
+    match evaluate_tick(&input) {
+        TickAction::None => {}
+        TickAction::PauseUntil(until) => {
+            store
+                .set_pause_state(PauseState::Until(until))
+                .context("failed to set pause state")?;
+        }
+        TickAction::SetTheme(theme) => {
+            store.set_theme(theme).context("failed to cache theme")?;
 
-    if is_manual_override(current_theme, target_theme, cached_theme) {
-        info!("manual override detected");
-        let next_theme_change = get_next_theme_change(daylight, &now);
-
-        ctx.store()
-            .set_pause_state(PauseState::Until(next_theme_change))
-            .context("failed to pause for manual override")?;
-
-        return Ok(());
-    }
-
-    // TODO: Consider doing a transaction/rollback system instead of resetting on failure.
-    ctx.store()
-        .set_theme(target_theme)
-        .context("failed to cache next theme")?;
-
-    if let Err(err) = set_system_theme(target_theme) {
-        error!("failed to set theme: {err}");
-
-        ctx.store()
-            .set_theme(current_theme)
-            .context("failed to revert cached theme after setting system theme failed")?;
+            if let Err(err) = set_system_theme(theme) {
+                error!("failed to set theme: {err}");
+                store.set_theme(current_theme)?;
+            }
+        }
     }
 
     Ok(())
@@ -111,19 +133,18 @@ fn sleep_until(deadline: Instant) {
 }
 
 fn resolve_coordinates(
-    ctx: &mut Context,
+    store: &FileStore,
     now: &DateTime<Local>,
 ) -> anyhow::Result<Option<GeoCoordinate>> {
-    if !ctx.store().location_enabled().unwrap_or(false) {
+    if !store.location_enabled().unwrap_or(false) {
         return Ok(None);
     }
 
-    if let Some(coordinates) = ctx.store().location().unwrap_or(None) {
+    if let Some(coordinates) = store.location().unwrap_or(None) {
         return Ok(Some(coordinates));
     }
 
-    let was_attempted_today = ctx
-        .store()
+    let was_attempted_today = store
         .last_location_attempt()
         .context("failed to get last location attempt")?
         .is_some_and(|last_attempt| {
@@ -135,13 +156,13 @@ fn resolve_coordinates(
         bail!("already attempted to get geographic coordinates today");
     }
 
-    ctx.store()
+    store
         .set_last_location_attempt(*now)
         .context("failed to cache last attempt")?;
 
     let coordinates = get_coordinates()?;
 
-    ctx.store()
+    store
         .set_location(coordinates)
         .context("failed to set coordinates: {err}")?;
 
@@ -149,32 +170,30 @@ fn resolve_coordinates(
 }
 
 fn resolve_daylight(
-    ctx: &mut Context,
+    store: &FileStore,
     now: &DateTime<Local>,
     coordinates: GeoCoordinate,
 ) -> anyhow::Result<Daylight> {
-    let was_updated_today = ctx
-        .store()
+    let was_updated_today = store
         .last_updated_at()
         .context("failed to get last update timestamp")?
         .is_some_and(|last_update| last_update == now.date_naive());
 
     if was_updated_today
-        && let Some(daylight) = ctx
-            .store()
+        && let Some(daylight) = store
             .daylight()
             .context("failed to get cached daylight times")?
     {
         return Ok(daylight);
     }
 
-    ctx.store()
+    store
         .set_last_updated_at(now.date_naive())
         .context("failed to cache last updated at: {err}")?;
 
     let daylight = get_daylight(coordinates)?;
 
-    ctx.store()
+    store
         .set_daylight(daylight)
         .context("failed to cache daylight times: {err}")?;
 
@@ -189,7 +208,7 @@ fn get_coordinates() -> anyhow::Result<GeoCoordinate> {
         latitude: f32,
     }
 
-    debug!("querying external API for geographic location");
+    info!("querying external API for geographic location");
     let response = Client::new()
         .get("https://freeipapi.com/api/json")
         .timeout(Duration::from_secs(10))
@@ -228,7 +247,7 @@ fn get_daylight(coordinates: GeoCoordinate) -> anyhow::Result<Daylight> {
         latitude = coordinates.latitude
     );
 
-    debug!("querying external API for sunrise/sunset times");
+    info!("querying external API for sunrise/sunset times");
     let response = Client::new()
         .get(url)
         .timeout(Duration::from_secs(10))
@@ -269,7 +288,7 @@ fn get_next_theme_change(daylight: Daylight, now: &DateTime<Local>) -> DateTime<
         daylight.sunrise
     };
 
-    let date = if is_daytime && daylight.sunset < daylight.sunrise {
+    let date = if is_daytime && daylight.sunset_is_next_day() {
         now.date_naive().checked_add_days(Days::new(1)).unwrap()
     } else {
         now.date_naive()
@@ -300,6 +319,8 @@ fn set_system_theme(theme: Theme) -> anyhow::Result<()> {
 
 #[cfg(test)]
 mod tests {
+    use chrono::NaiveDate;
+
     use super::*;
 
     fn daylight() -> Daylight {
@@ -317,15 +338,15 @@ mod tests {
     }
 
     #[test]
-    fn after_sunrise_is_light() {
-        let time = NaiveTime::from_hms_opt(10, 0, 0).unwrap();
+    fn at_sunrise_is_light() {
+        let time = NaiveTime::from_hms_opt(6, 30, 0).unwrap();
         let target_theme = get_target_theme(daylight(), time);
         assert_eq!(target_theme, Theme::Light);
     }
 
     #[test]
-    fn at_sunrise_is_light() {
-        let time = NaiveTime::from_hms_opt(6, 30, 0).unwrap();
+    fn after_sunrise_is_light() {
+        let time = NaiveTime::from_hms_opt(10, 0, 0).unwrap();
         let target_theme = get_target_theme(daylight(), time);
         assert_eq!(target_theme, Theme::Light);
     }
@@ -349,5 +370,68 @@ mod tests {
         let time = NaiveTime::from_hms_opt(0, 0, 0).unwrap();
         let target_theme = get_target_theme(daylight_sunset_next_day(), time);
         assert_eq!(target_theme, Theme::Light);
+    }
+
+    fn expired_at_sunrise() -> DateTime<Local> {
+        let Daylight { sunrise, sunset: _ } = daylight();
+
+        let datetime = NaiveDate::from_ymd_opt(2026, 5, 29)
+            .unwrap()
+            .and_time(sunrise);
+
+        Local.from_local_datetime(&datetime).unwrap()
+    }
+
+    // fn expired_at_sunset() -> DateTime<Local> {
+    //     let Daylight { sunrise: _, sunset } = daylight();
+
+    //     let datetime = NaiveDate::from_ymd_opt(2026, 5, 29)
+    //         .unwrap()
+    //         .and_time(sunset);
+
+    //     Local.from_local_datetime(&datetime).unwrap()
+    // }
+
+    #[test]
+    fn paused_state() {
+        let input = TickInput {
+            now: Local.with_ymd_and_hms(2026, 5, 29, 16, 0, 0).unwrap(),
+            pause_state: PauseState::Indefinite,
+            current_theme: Theme::Dark,
+            cached_theme: Theme::Dark,
+            daylight: daylight(),
+        };
+
+        assert_eq!(evaluate_tick(&input), TickAction::None);
+    }
+
+    #[test]
+    fn expired_pause() {
+        let input = TickInput {
+            now: Local.with_ymd_and_hms(2026, 5, 29, 8, 0, 0).unwrap(),
+            pause_state: PauseState::Until(expired_at_sunrise()),
+            current_theme: Theme::Dark,
+            cached_theme: Theme::Dark,
+            daylight: daylight(),
+        };
+
+        let action = evaluate_tick(&input);
+
+        assert_eq!(action, TickAction::SetTheme(Theme::Light));
+    }
+
+    #[test]
+    fn manual_override() {
+        let input = TickInput {
+            now: Local.with_ymd_and_hms(2026, 5, 29, 16, 0, 0).unwrap(),
+            pause_state: PauseState::None,
+            current_theme: Theme::Dark,
+            cached_theme: Theme::Light,
+            daylight: daylight(),
+        };
+
+        let action = evaluate_tick(&input);
+
+        assert!(matches!(action, TickAction::PauseUntil(_)));
     }
 }
