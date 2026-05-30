@@ -1,3 +1,4 @@
+mod completions;
 mod disable;
 mod enable;
 mod start;
@@ -18,6 +19,9 @@ pub enum Subcommand {
 
     /// Turn off the automatic theme switcher
     Disable(disable::Disable),
+
+    /// Generate auto-complete options for your preferred shell
+    Completions(completions::Completions),
 }
 
 impl Subcommand {
@@ -26,6 +30,7 @@ impl Subcommand {
             Self::Start(ref inner) => inner.run(&mut ctx),
             Self::Enable(ref inner) => inner.run(&mut ctx),
             Self::Disable(ref inner) => inner.run(&mut ctx),
+            Self::Completions(ref inner) => inner.run(&mut ctx),
         }
     }
 }
