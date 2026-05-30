@@ -8,6 +8,7 @@ use tracing::warn;
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum Theme {
     #[default]
+    Default,
     Light,
     Dark,
 }
@@ -30,7 +31,8 @@ impl Theme {
 
     pub fn as_color_scheme(self) -> &'static str {
         match self {
-            Self::Light => "default",
+            Self::Default => "default",
+            Self::Light => "prefer-light",
             Self::Dark => "prefer-dark",
         }
     }
@@ -41,7 +43,7 @@ impl FromStr for Theme {
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
-            "default" => Ok(Self::Light),
+            "default" | "prefer-light" => Ok(Self::Light),
             "prefer-dark" => Ok(Self::Dark),
             other => Err(anyhow!("unknown gsettings color-scheme: {other}")),
         }
@@ -51,6 +53,7 @@ impl FromStr for Theme {
 impl fmt::Display for Theme {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match *self {
+            Self::Default => "Default".fmt(f),
             Self::Light => "Light".fmt(f),
             Self::Dark => "Dark".fmt(f),
         }

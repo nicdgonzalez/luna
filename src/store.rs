@@ -5,7 +5,7 @@ use chrono::{DateTime, Local, NaiveDate};
 
 use crate::cache::{Cache, CacheRepository};
 use crate::config::{Config, ConfigRepository, Daylight, Fallback, GeoCoordinate, Location};
-use crate::state::{PauseState, State, StateRepository};
+use crate::state::{Pause, State, StateRepository};
 use crate::theme::Theme;
 
 #[derive(Debug)]
@@ -42,14 +42,14 @@ impl StateRepository for FileStore {
         Ok(())
     }
 
-    fn pause_state(&self) -> Result<PauseState, Self::Err> {
+    fn pause(&self) -> Result<Pause, Self::Err> {
         let data = self.state()?;
-        Ok(data.pause_state)
+        Ok(data.pause)
     }
 
-    fn set_pause_state(&self, pause_state: PauseState) -> Result<(), Self::Err> {
+    fn set_pause(&self, pause_state: Pause) -> Result<(), Self::Err> {
         let mut data = self.state()?;
-        data.pause_state = pause_state;
+        data.pause = pause_state;
         self.set_state(data)?;
         Ok(())
     }

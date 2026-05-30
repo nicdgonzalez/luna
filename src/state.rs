@@ -17,10 +17,10 @@ pub trait StateRepository {
     fn set_state(&self, data: State) -> Result<(), Self::Err>;
 
     /// Get the theme switching service's pause state.
-    fn pause_state(&self) -> Result<PauseState, Self::Err>;
+    fn pause(&self) -> Result<Pause, Self::Err>;
 
     /// Persist the application pause state.
-    fn set_pause_state(&self, pause_state: PauseState) -> Result<(), Self::Err>;
+    fn set_pause(&self, pause_state: Pause) -> Result<(), Self::Err>;
 
     /// Last theme set by the theme switching service.
     fn theme(&self) -> Result<Theme, Self::Err>;
@@ -31,7 +31,7 @@ pub trait StateRepository {
 
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize)]
 pub struct State {
-    pub pause_state: PauseState,
+    pub pause: Pause,
     pub theme: Theme,
 }
 
@@ -46,7 +46,7 @@ impl FromStr for State {
 /// Represents whether the theme switching service is active or paused.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", content = "data")]
-pub enum PauseState {
+pub enum Pause {
     /// Theme switching service is active (not paused).
     #[default]
     None,
@@ -58,7 +58,7 @@ pub enum PauseState {
     Indefinite,
 }
 
-impl PauseState {
+impl Pause {
     /// Whether we are still paused based on the current time.
     pub fn is_paused(&self, now: &DateTime<Local>) -> bool {
         match *self {

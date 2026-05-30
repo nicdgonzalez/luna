@@ -10,7 +10,7 @@ use tracing::{error, info, warn};
 use crate::cache::CacheRepository;
 use crate::commands::prelude::*;
 use crate::config::{ConfigRepository, Daylight, GeoCoordinate};
-use crate::state::{PauseState, StateRepository};
+use crate::state::{Pause, StateRepository};
 use crate::store::FileStore;
 use crate::theme::Theme;
 
@@ -45,7 +45,7 @@ impl Run for Start {
 #[derive(Debug, Clone, Copy)]
 struct TickInput {
     now: DateTime<Local>,
-    pause_state: PauseState,
+    pause_state: Pause,
     current_theme: Theme,
     cached_theme: Theme,
     daylight: Daylight,
@@ -78,7 +78,7 @@ fn evaluate_tick(input: &TickInput) -> TickAction {
 }
 
 fn tick(store: &FileStore, now: DateTime<Local>) -> anyhow::Result<()> {
-    let pause_state = store.pause_state().context("failed to get pause state")?;
+    let pause_state = store.pause().context("failed to get pause state")?;
 
     let coordinates = resolve_coordinates(store, &now)?;
     let daylight = coordinates
@@ -107,7 +107,7 @@ fn tick(store: &FileStore, now: DateTime<Local>) -> anyhow::Result<()> {
         TickAction::None => {}
         TickAction::PauseUntil(until) => {
             store
-                .set_pause_state(PauseState::Until(until))
+                .set_pause(Pause::Until(until))
                 .context("failed to set pause state")?;
         }
         TickAction::SetTheme(theme) => {
@@ -396,7 +396,7 @@ mod tests {
     fn paused_state() {
         let input = TickInput {
             now: Local.with_ymd_and_hms(2026, 5, 29, 16, 0, 0).unwrap(),
-            pause_state: PauseState::Indefinite,
+            pause_state: Pause::Indefinite,
             current_theme: Theme::Dark,
             cached_theme: Theme::Dark,
             daylight: daylight(),
@@ -409,7 +409,7 @@ mod tests {
     fn expired_pause() {
         let input = TickInput {
             now: Local.with_ymd_and_hms(2026, 5, 29, 8, 0, 0).unwrap(),
-            pause_state: PauseState::Until(expired_at_sunrise()),
+            pause_state: Pause::Until(expired_at_sunrise()),
             current_theme: Theme::Dark,
             cached_theme: Theme::Dark,
             daylight: daylight(),
@@ -424,7 +424,7 @@ mod tests {
     fn manual_override() {
         let input = TickInput {
             now: Local.with_ymd_and_hms(2026, 5, 29, 16, 0, 0).unwrap(),
-            pause_state: PauseState::None,
+            pause_state: Pause::None,
             current_theme: Theme::Dark,
             cached_theme: Theme::Light,
             daylight: daylight(),

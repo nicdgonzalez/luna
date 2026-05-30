@@ -4,19 +4,16 @@ use anyhow::Context as _;
 use colored::Colorize as _;
 
 use crate::commands::prelude::*;
-use crate::state::{PauseState, StateRepository};
+use crate::state::{Pause, StateRepository};
 
 #[derive(Debug, Clone, clap::Args)]
 pub struct Disable;
 
 impl Run for Disable {
     fn run(&self, ctx: &mut Context) -> anyhow::Result<()> {
-        let pause_state = ctx
-            .store()
-            .pause_state()
-            .context("failed to get pause state")?;
+        let pause_state = ctx.store().pause().context("failed to get pause state")?;
 
-        if pause_state == PauseState::Indefinite {
+        if pause_state == Pause::Indefinite {
             writeln!(
                 io::stdout(),
                 "{}",
@@ -28,7 +25,7 @@ impl Run for Disable {
         }
 
         ctx.store()
-            .set_pause_state(PauseState::Indefinite)
+            .set_pause(Pause::Indefinite)
             .context("failed to set pause state")?;
 
         writeln!(
