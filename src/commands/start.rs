@@ -117,6 +117,12 @@ fn tick(store: &FileStore, now: DateTime<Local>) -> anyhow::Result<()> {
                 error!("failed to set theme: {err}");
                 store.set_theme(current_theme)?;
             }
+
+            if matches!(pause_state, Pause::Until(_)) {
+                store
+                    .set_pause(Pause::None)
+                    .context("failed to set pause state")?;
+            }
         }
     }
 
