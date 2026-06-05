@@ -1,3 +1,4 @@
+mod cat;
 mod completions;
 mod disable;
 mod enable;
@@ -11,6 +12,13 @@ pub trait Run {
 
 #[derive(Debug, Clone, clap::Subcommand)]
 pub enum Subcommand {
+    /// Generate auto-complete options for your preferred shell
+    #[command(hide = true)]
+    Completions(completions::Completions),
+
+    /// Display the contents of persisted data
+    Cat(cat::Cat),
+
     /// Start the automatic theme switcher
     Start(start::Start),
 
@@ -19,18 +27,16 @@ pub enum Subcommand {
 
     /// Turn off the automatic theme switcher
     Disable(disable::Disable),
-
-    /// Generate auto-complete options for your preferred shell
-    Completions(completions::Completions),
 }
 
 impl Subcommand {
     pub fn run(&self, mut ctx: Context) -> anyhow::Result<()> {
         match *self {
+            Self::Completions(ref inner) => inner.run(&mut ctx),
+            Self::Cat(ref inner) => inner.run(&mut ctx),
             Self::Start(ref inner) => inner.run(&mut ctx),
             Self::Enable(ref inner) => inner.run(&mut ctx),
             Self::Disable(ref inner) => inner.run(&mut ctx),
-            Self::Completions(ref inner) => inner.run(&mut ctx),
         }
     }
 }
