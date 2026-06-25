@@ -54,8 +54,13 @@ struct TickInput {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum TickAction {
     None,
-    SetTheme(Theme),
-    PauseUntil(DateTime<Local>),
+    SetTheme {
+        target_theme: Theme,
+    },
+    PauseUntil {
+        target_theme: Theme,
+        next_theme_change: DateTime<Local>,
+    },
 }
 
 fn evaluate_tick(input: &TickInput) -> TickAction {
@@ -71,10 +76,13 @@ fn evaluate_tick(input: &TickInput) -> TickAction {
 
     if is_manual_override(input.current_theme, target_theme, input.cached_theme) {
         let next_theme_change = get_next_theme_change(input.daylight, &input.now);
-        return TickAction::PauseUntil(next_theme_change);
+        return TickAction::PauseUntil {
+            target_theme,
+            next_theme_change,
+        };
     }
 
-    TickAction::SetTheme(target_theme)
+    TickAction::SetTheme { target_theme }
 }
 
 fn tick(store: &FileStore, now: DateTime<Local>) -> anyhow::Result<()> {
@@ -105,15 +113,24 @@ fn tick(store: &FileStore, now: DateTime<Local>) -> anyhow::Result<()> {
 
     match evaluate_tick(&input) {
         TickAction::None => {}
-        TickAction::PauseUntil(until) => {
+        TickAction::PauseUntil {
+            target_theme,
+            next_theme_change,
+        } => {
             store
-                .set_pause(Pause::Until(until))
+                .set_theme(target_theme)
+                .context("failed to cache theme")?;
+
+            store
+                .set_pause(Pause::Until(next_theme_change))
                 .context("failed to set pause state")?;
         }
-        TickAction::SetTheme(theme) => {
-            store.set_theme(theme).context("failed to cache theme")?;
+        TickAction::SetTheme { target_theme } => {
+            store
+                .set_theme(target_theme)
+                .context("failed to cache theme")?;
 
-            if let Err(err) = set_system_theme(theme) {
+            if let Err(err) = set_system_theme(target_theme) {
                 error!("failed to set theme: {err}");
                 store.set_theme(current_theme)?;
             }
@@ -282,7 +299,7 @@ fn get_target_theme(daylight: Daylight, time: NaiveTime) -> Theme {
 }
 
 fn is_manual_override(current: Theme, target: Theme, cached: Theme) -> bool {
-    current != target && target == cached
+    current != target && target != cached
 }
 
 fn get_next_theme_change(daylight: Daylight, now: &DateTime<Local>) -> DateTime<Local> {
@@ -433,7 +450,10 @@ mod tests {
             pause_state: Pause::None,
             current_theme: Theme::Dark,
             cached_theme: Theme::Light,
-            daylight: daylight(),
+            daylight: Daylight {
+                sunrise: NaiveTime::from_hms_opt(6, 30, 0).unwrap(),
+                sunset: NaiveTime::from_hms_opt(18, 30, 0).unwrap(),
+            },
         };
 
         let action = evaluate_tick(&input);
