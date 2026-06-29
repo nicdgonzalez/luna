@@ -58,7 +58,7 @@ enum TickAction {
         target_theme: Theme,
     },
     PauseUntil {
-        target_theme: Theme,
+        current_theme: Theme,
         next_theme_change: DateTime<Local>,
     },
 }
@@ -77,7 +77,7 @@ fn evaluate_tick(input: &TickInput) -> TickAction {
     if is_manual_override(input.current_theme, target_theme, input.cached_theme) {
         let next_theme_change = get_next_theme_change(input.daylight, &input.now);
         return TickAction::PauseUntil {
-            target_theme,
+            current_theme: input.current_theme,
             next_theme_change,
         };
     }
@@ -114,11 +114,11 @@ fn tick(store: &FileStore, now: DateTime<Local>) -> anyhow::Result<()> {
     match evaluate_tick(&input) {
         TickAction::None => {}
         TickAction::PauseUntil {
-            target_theme,
+            current_theme,
             next_theme_change,
         } => {
             store
-                .set_theme(target_theme)
+                .set_theme(current_theme)
                 .context("failed to cache theme")?;
 
             store
@@ -299,7 +299,19 @@ fn get_target_theme(daylight: Daylight, time: NaiveTime) -> Theme {
 }
 
 fn is_manual_override(current: Theme, target: Theme, cached: Theme) -> bool {
-    current != target && target != cached
+    // 18:00
+    // - Current: Light
+    // - Target: Light
+    // - Cached: Light
+    // 18:00 (override)
+    // - Current = Dark
+    // - Target = Light
+    // - Cached = Light
+    // 20:00
+    // - Current: Light
+    // - Target: Dark
+    // - Cached: Light
+    current != target && current != cached
 }
 
 fn get_next_theme_change(daylight: Daylight, now: &DateTime<Local>) -> DateTime<Local> {
